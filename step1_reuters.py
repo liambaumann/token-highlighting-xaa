@@ -10,21 +10,27 @@ def load_author_texts(folder):
             texts.append(f.read())
     return texts
 
-authors = os.listdir("data/C50train")
+# calculate or load centroids for each author (from train)
+authors = sorted(os.listdir("data/C50train"))
 
-centroids = {}
-supports = {}
-for i in range(len(os.listdir("data/C50train"))):
-    print("calculating centroid for", authors[i])
-    supports[authors[i]] = load_author_texts(f"data/C50train/{authors[i]}")
-    centroids[authors[i]] = embed_episode(supports[authors[i]])
+if os.path.exists("centroids.pt"):
+    print("loading centroids from centroids.pt")
+    centroids = torch.load("centroids.pt")
+else:
+    print("no centroids cached, calculating centroids for every author")
+    centroids = {}
+    for a in authors:
+        print("calculating centroid for", a)
+        support_texts = load_author_texts(f"data/C50train/{a}")
+        centroids[a] = embed_episode(support_texts)
+    torch.save(centroids, "centroids.pt")
 
 correct = 0
 total = 0
 per_author_correct = {}
 per_author_total = {}
 
-for i in range(len(authors)):
+for i in range(5):
     query_texts = load_author_texts(f"data/C50test/{authors[i]}")
     author_correct = 0
     for query_text in query_texts:
