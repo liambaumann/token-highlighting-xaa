@@ -7,7 +7,7 @@ tokenizer = AutoTokenizer.from_pretrained("rrivera1849/LUAR-MUD", trust_remote_c
 model = AutoModel.from_pretrained("rrivera1849/LUAR-MUD", trust_remote_code=True)
 model.eval()
 
-def embed(text, max_length=32):
+def embed(text, max_length=512):
     tokenized = tokenizer(
         [text],
         max_length=max_length,
