@@ -1,0 +1,6 @@
+*
+!.gitignore
+!README.md
+!luar_model.py
+!reuters_eval.py
+!reuters_data.py
