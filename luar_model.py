@@ -33,3 +33,9 @@ def embed_episode(texts, max_length=512):
     tokenized["attention_mask"] = tokenized["attention_mask"].reshape(1, episode_length, -1)
     with torch.no_grad():
         return model(**tokenized).squeeze(0)
+    
+def embed_from_ids(input_ids, attention_mask):
+    input_ids = input_ids.reshape(1, 1, -1)
+    attention_mask = attention_mask.reshape(1, 1, -1)
+    with torch.no_grad():
+        return model(input_ids=input_ids, attention_mask=attention_mask).squeeze(0)
