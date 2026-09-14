@@ -2,7 +2,9 @@ import os
 import torch
 from luar_model import embed_episode
 
-
+"""
+Reutrn list of full texts of each author folder
+"""
 def load_author_texts(folder):
     texts = []
     for filename in sorted(os.listdir(folder)):
