@@ -2,9 +2,9 @@
 TU Wien Bachelor thesis repository
 
 ## Dependencies
-- torch
-- transformers
-- einops
+```
+pip install -r requirements.txt
+```
 
 ## Usage
 ### Reuters

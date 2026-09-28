@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 
 
-def save_highlighted_html(tokens, scores, author, tokenizer, output_dir="outputs"):
+def save_highlighted_html(tokens, scores, filename, tokenizer, output_dir="outputs"):
     os.makedirs(output_dir, exist_ok=True)
 
     max_abs_score = max(abs(s) for s in scores) or 1.0
@@ -60,8 +60,7 @@ def save_highlighted_html(tokens, scores, author, tokenizer, output_dir="outputs
 </html>
 """
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filepath = os.path.join(output_dir, f"{author}_{timestamp}.html")
+    filepath = os.path.join(output_dir, f"{filename}.html")
 
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(html)

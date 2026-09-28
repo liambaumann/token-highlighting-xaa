@@ -2,9 +2,6 @@ data/
 outputs/
 
 check_lengths.py
-occlusion_old.py
-test.py
-run_example.py
 .DS_Store
 __pycache__
 
