@@ -1,6 +1,8 @@
 data/
 outputs/
 models/
+cache/
+results/
 
 check_lengths.py
 .DS_Store
@@ -8,3 +10,5 @@ __pycache__
 
 
 *.pt
+
+sync_vsc.sh

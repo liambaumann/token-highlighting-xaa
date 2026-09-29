@@ -12,4 +12,4 @@ source $DATA/venvs/bsc/bin/activate
 cd $DATA/bsc
 
 nvidia-smi
-python -u masking_reuters.py
+python -u run.py

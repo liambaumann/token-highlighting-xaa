@@ -1,7 +1,7 @@
-import os
 import torch
-from luar_model import embed
-from reuters_data import load_author_texts, get_centroids
+from model import embed
+from data import load_authors, load_test_texts, get_centroids
+import config
 
 
 def get_similarity_matrix(authors, centroids):
@@ -9,7 +9,7 @@ def get_similarity_matrix(authors, centroids):
     true_labels = []
     for i, author in enumerate(authors):
         print("testing", author)
-        query_texts = load_author_texts(f"data/C50test/{author}")
+        query_texts = load_test_texts(config.DATASET, author)
         for query_text in query_texts:
             query_embedding = embed(query_text)
             row = [
@@ -50,8 +50,8 @@ def mean_avg_precision(sims, true_labels):
 
 
 if __name__ == "__main__":
-    authors = sorted(os.listdir("data/C50train"))[:15] # limit authors here, e.g. [:20]
-    centroids = get_centroids(authors)
+    authors = load_authors(config.DATASET)[:15] # limit authors here, e.g. [:20]
+    centroids = get_centroids(config.DATASET, authors)
     sims, true_labels = get_similarity_matrix(authors, centroids)
 
     correct, total = top1_accuracy(sims, true_labels)

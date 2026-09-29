@@ -2,20 +2,25 @@
 
 import os
 
-# all Hugging Face files (model, custom code, caches) go to models/ instead of ~/.cache/huggingface
 # must be set before transformers is imported
+# all Hugging Face files (model, custom code, caches) go to models/ instead of ~/.cache/huggingface
 os.environ["HF_HOME"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+# Triton (used by PyTorch on GPU) caches compiled kernels in ~/.triton by default
+os.environ["TRITON_HOME"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
 
 from transformers import AutoTokenizer, AutoModel
 import torch
+import config
 
 # use GPU if available (on VSC)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 BATCH_SIZE = 32
 
-tokenizer = AutoTokenizer.from_pretrained("rrivera1849/LUAR-MUD", trust_remote_code=True)
-model = AutoModel.from_pretrained("rrivera1849/LUAR-MUD", trust_remote_code=True)
+MODELS = {"luar-mud": "rrivera1849/LUAR-MUD"}
+
+tokenizer = AutoTokenizer.from_pretrained(MODELS[config.MODEL], trust_remote_code=True)
+model = AutoModel.from_pretrained(MODELS[config.MODEL], trust_remote_code=True)
 model.eval()
 model.to(device)
 
@@ -31,7 +36,7 @@ def embed(text, max_length=512):
     tokenized["attention_mask"] = tokenized["attention_mask"].reshape(1, 1, -1).to(device)
     with torch.no_grad():
         return model(**tokenized).squeeze(0).cpu()
-    
+
 def embed_episode(texts, max_length=512):
     episode_length = len(texts)
     tokenized = tokenizer(
@@ -45,7 +50,7 @@ def embed_episode(texts, max_length=512):
     tokenized["attention_mask"] = tokenized["attention_mask"].reshape(1, episode_length, -1).to(device)
     with torch.no_grad():
         return model(**tokenized).squeeze(0).cpu()
-    
+
 def embed_from_ids(input_ids, attention_mask):
     # input_ids, attention_mask: shape (batch, seq_len), each row a separate document (episode length 1)
     # processed in chunks of BATCH_SIZE to bound memory use
