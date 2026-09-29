@@ -1,5 +1,6 @@
 data/
 outputs/
+models/
 
 check_lengths.py
 .DS_Store

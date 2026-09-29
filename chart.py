@@ -1,7 +1,7 @@
 def build_chart_html(base_similarity, budget_results, title, link_href):
     labels = [0] + [budget["k"] for budget in budget_results]
     top_data = [base_similarity] + [budget["top_similarity"] for budget in budget_results]
-    random_data = [base_similarity] + [budget["random_similarity"] for budget in budget_results]
+    random_avg_data = [base_similarity] + [budget["random_similarity_avg"] for budget in budget_results]
 
     return f"""
     <a href="{link_href}" style="text-decoration:none; color:inherit;">
@@ -17,7 +17,7 @@ def build_chart_html(base_similarity, budget_results, title, link_href):
             labels: {labels},
             datasets: [
                 {{ label: 'top-k removed', data: {[round(v, 4) for v in top_data]}, borderColor: 'red', backgroundColor: 'red' }},
-                {{ label: 'random-k removed', data: {[round(v, 4) for v in random_data]}, borderColor: 'blue', backgroundColor: 'blue' }}
+                {{ label: 'random-k removed (n=5 avg)', data: {[round(v, 4) for v in random_avg_data]}, borderColor: 'blue', backgroundColor: 'blue' }}
             ]
         }},
         options: {{
