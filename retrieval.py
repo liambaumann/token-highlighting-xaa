@@ -1,17 +1,19 @@
 import torch
-from model import embed
+from model import embed, embed_chunked
 from data import load_authors, load_test_texts, get_centroids
 import config
 
+USE_CHUNKS = True
 
-def get_similarity_matrix(authors, centroids):
+
+def get_similarity_matrix(authors, centroids, embed_fn=embed):
     sims = []
     true_labels = []
     for i, author in enumerate(authors):
         print("testing", author)
         query_texts = load_test_texts(config.DATASET, author)
         for query_text in query_texts:
-            query_embedding = embed(query_text)
+            query_embedding = embed_fn(query_text)
             row = [
                 torch.nn.functional.cosine_similarity(query_embedding, centroids[a], dim=0).item()
                 for a in authors
@@ -50,9 +52,13 @@ def mean_avg_precision(sims, true_labels):
 
 
 if __name__ == "__main__":
-    authors = load_authors(config.DATASET)[:15] # limit authors here, e.g. [:20]
-    centroids = get_centroids(config.DATASET, authors)
-    sims, true_labels = get_similarity_matrix(authors, centroids)
+    authors = load_authors(config.DATASET)
+    if USE_CHUNKS:
+        centroids = get_centroids(config.DATASET, authors, embed_fn=embed_chunked, cache_name="centroids_chunk32.pt")
+        sims, true_labels = get_similarity_matrix(authors, centroids, embed_fn=lambda t: embed_chunked([t]))
+    else:
+        centroids = get_centroids(config.DATASET, authors)
+        sims, true_labels = get_similarity_matrix(authors, centroids)
 
     correct, total = top1_accuracy(sims, true_labels)
     correct_top5, total_top5 = soft_top_x_accuracy(sims, true_labels, 5)

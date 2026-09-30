@@ -34,15 +34,15 @@ def load_test_texts(dataset, author):
     return load_author_texts(os.path.join(DATASETS[dataset]["test"], author))
 
 
-def get_centroids(dataset, authors):
-    cache_path = os.path.join(config.CACHE_DIR, "centroids.pt")
+def get_centroids(dataset, authors, embed_fn=embed_episode, cache_name="centroids.pt"):
+    cache_path = os.path.join(config.CACHE_DIR, cache_name)
     if os.path.exists(cache_path):
         return torch.load(cache_path)
     centroids = {}
     for author in authors:
         print("calculating centroid for", author)
         support_texts = load_train_texts(dataset, author)
-        centroids[author] = embed_episode(support_texts)
+        centroids[author] = embed_fn(support_texts)
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
     torch.save(centroids, cache_path)
     return centroids

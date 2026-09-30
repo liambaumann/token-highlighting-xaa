@@ -1,6 +1,6 @@
 import random
 import torch
-from model import embed_from_ids
+from model import embed_variants
 
 
 def select_windows(order, n, m):
@@ -40,9 +40,7 @@ def evaluate_budgets(input_ids, attention_mask, centroid, scores, budget_percent
             assert all(0 < i < num_tokens - 1 for i in random_indices)
             keep_masks.append([i for i in range(input_ids.shape[1]) if i not in random_indices])
 
-        batch_ids = torch.cat([input_ids[:, keep_mask] for keep_mask in keep_masks], dim=0)
-        batch_attention = torch.cat([attention_mask[:, keep_mask] for keep_mask in keep_masks], dim=0)
-        batch_embeddings = embed_from_ids(batch_ids, batch_attention)
+        batch_embeddings = embed_variants(input_ids, attention_mask, keep_masks)
         similarities = torch.nn.functional.cosine_similarity(
             batch_embeddings, centroid.unsqueeze(0), dim=1
         ).tolist()

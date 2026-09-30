@@ -1,5 +1,5 @@
 import torch
-from model import embed_from_ids, tokenizer
+from model import embed_variants, tokenizer
 
 
 def tokenize(text):
@@ -12,25 +12,24 @@ def tokenize(text):
 
 
 def occlusion_scores(input_ids, attention_mask, centroid, n=1):
+    num_tokens = input_ids.shape[1]
+    all_positions = list(range(num_tokens))
+
+    base_embedding = embed_variants(input_ids, attention_mask, [all_positions])
     base_similarity = torch.nn.functional.cosine_similarity(
-        embed_from_ids(input_ids, attention_mask), centroid.unsqueeze(0), dim=1
+        base_embedding, centroid.unsqueeze(0), dim=1
     ).item()
 
-    num_tokens = input_ids.shape[1]
     num_windows = num_tokens - n + 1
 
     # windows that would remove position 0 (<s>) or num_tokens - 1 (</s>) are skipped
     valid_starts = list(range(1, num_tokens - n))
 
-    loo_ids = torch.cat([
-        torch.cat([input_ids[:, :i], input_ids[:, i+n:]], dim=1)
-        for i in valid_starts
-    ], dim=0)
-    loo_mask = torch.cat([
-        torch.cat([attention_mask[:, :i], attention_mask[:, i+n:]], dim=1)
-        for i in valid_starts
-    ], dim=0)
-    loo_embeddings = embed_from_ids(loo_ids, loo_mask)
+    keep_lists = [
+        [i for i in all_positions if not (start <= i < start + n)]
+        for start in valid_starts
+    ]
+    loo_embeddings = embed_variants(input_ids, attention_mask, keep_lists)
     perturbed_similarities = torch.nn.functional.cosine_similarity(
         loo_embeddings, centroid.unsqueeze(0), dim=1
     ).tolist()

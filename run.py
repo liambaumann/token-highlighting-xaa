@@ -6,7 +6,7 @@ import glob
 import json
 import time
 import config
-from model import tokenizer
+from model import tokenizer, embed_chunked
 from data import load_authors, load_test_texts, get_centroids
 from scoring import tokenize, occlusion_scores
 from masking import evaluate_budgets
@@ -19,7 +19,10 @@ for old_file in glob.glob(os.path.join(config.RESULTS_DIR, "*.json")):
     os.remove(old_file)
 
 authors = load_authors(config.DATASET)
-centroids = get_centroids(config.DATASET, authors)
+if config.USE_CHUNKS:
+    centroids = get_centroids(config.DATASET, authors, embed_fn=embed_chunked, cache_name="centroids_chunk32.pt")
+else:
+    centroids = get_centroids(config.DATASET, authors)
 
 test_cases = [
     (authors[0], 2),
@@ -61,7 +64,7 @@ for author, doc_index in test_cases:
                 "doc_index": doc_index,
                 "n": n,
                 "base_similarity": result["base_similarity"],
+                "budget_results": result["budget_results"],
                 "tokens": result["tokens"],
                 "scores": result["scores"],
-                "budget_results": result["budget_results"],
-            }, f)
+            }, f, indent=2)
