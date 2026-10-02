@@ -74,10 +74,34 @@ def embed_chunked(texts):
     with torch.no_grad():
         return model(input_ids=input_ids, attention_mask=attention_mask).squeeze(0).cpu()
 
+def content_token_count(text, max_tokens=510):
+    return len(tokenizer(text, add_special_tokens=False)["input_ids"][:max_tokens])
+
+def embed_single(texts, starts):
+    # one 30-content-token excerpt per text (positions starts[i] .. starts[i]+30 of that
+    # text's first 510 content tokens), wrapped in <s></s>, as one episode of length len(texts)
+    all_ids = []
+    all_mask = []
+    for text, start in zip(texts, starts):
+        ids = tokenizer(text, add_special_tokens=False)["input_ids"][:510]
+        piece = [tokenizer.bos_token_id] + ids[start:start+30] + [tokenizer.eos_token_id]
+        mask = [1] * len(piece)
+        pad_len = 32 - len(piece)
+        piece = piece + [tokenizer.pad_token_id] * pad_len
+        mask = mask + [0] * pad_len
+        all_ids.append(piece)
+        all_mask.append(mask)
+
+    episode_length = len(texts)
+    input_ids = torch.tensor(all_ids).reshape(1, episode_length, 32).to(device)
+    attention_mask = torch.tensor(all_mask).reshape(1, episode_length, 32).to(device)
+    with torch.no_grad():
+        return model(input_ids=input_ids, attention_mask=attention_mask).squeeze(0).cpu()
+
 def embed_variants(input_ids, attention_mask, keep_lists):
     # input_ids, attention_mask: shape (1, num_tokens), a single tokenized document (<s>, content, </s>)
     # keep_lists: list of variants, each a sorted list of positions (into input_ids) to keep
-    if not config.USE_CHUNKS:
+    if config.MODE != "chunk32":
         variant_ids = torch.cat([input_ids[:, keep] for keep in keep_lists], dim=0)
         variant_mask = torch.cat([attention_mask[:, keep] for keep in keep_lists], dim=0)
         return embed_from_ids(variant_ids, variant_mask)

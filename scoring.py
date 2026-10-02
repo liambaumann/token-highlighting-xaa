@@ -3,8 +3,7 @@ from model import embed_variants, tokenizer
 
 
 def tokenize(text):
-    text_no_newlines = " ".join(text.split())
-    tokenized = tokenizer(text_no_newlines, max_length=512, truncation=True, return_tensors="pt")
+    tokenized = tokenizer(text, max_length=512, truncation=True, return_tensors="pt")
 
     input_ids = tokenized["input_ids"]
     attention_mask = tokenized["attention_mask"]

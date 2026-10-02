@@ -22,6 +22,7 @@ def evaluate_budgets(input_ids, attention_mask, centroid, scores, budget_percent
     candidate_positions = list(range(1, num_tokens - 1))
     candidate_starts = list(range(1, num_tokens - n))
     sorted_starts = sorted(candidate_starts, key=lambda i: scores[i], reverse=True)
+    bottom_sorted_starts = sorted(candidate_starts, key=lambda i: scores[i])
 
     budget_results = []
     for pct in budget_percentages:
@@ -40,13 +41,19 @@ def evaluate_budgets(input_ids, attention_mask, centroid, scores, budget_percent
             assert all(0 < i < num_tokens - 1 for i in random_indices)
             keep_masks.append([i for i in range(input_ids.shape[1]) if i not in random_indices])
 
+        bottom_starts = select_windows(bottom_sorted_starts, n, m)
+        bottom_indices = [p for start in bottom_starts for p in range(start, start + n)]
+        assert all(0 < i < num_tokens - 1 for i in bottom_indices)
+        keep_masks.append([i for i in range(input_ids.shape[1]) if i not in bottom_indices])
+
         batch_embeddings = embed_variants(input_ids, attention_mask, keep_masks)
         similarities = torch.nn.functional.cosine_similarity(
             batch_embeddings, centroid.unsqueeze(0), dim=1
         ).tolist()
 
         top_similarity = similarities[0]
-        random_similarities = similarities[1:]
+        random_similarities = similarities[1:-1]
+        bottom_similarity = similarities[-1]
 
         budget_results.append({
             "k": m * n,
@@ -55,6 +62,7 @@ def evaluate_budgets(input_ids, attention_mask, centroid, scores, budget_percent
             "top_similarity": top_similarity,
             "random_similarities": random_similarities,
             "random_similarity_avg": sum(random_similarities) / len(random_similarities),
+            "bottom_similarity": bottom_similarity,
         })
 
     return budget_results
