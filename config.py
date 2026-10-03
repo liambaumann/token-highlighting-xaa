@@ -8,7 +8,7 @@ MODE = "chunk32"
 
 SINGLE32_SEEDS = [0, 1, 2]
 
-MODEL_MODE_NAME = MODEL + ("" if MODE == "plain" else f"_{MODE}")
+MODEL_MODE_NAME = f"{MODEL}_{MODE}"
 
 # run.py (occlusion/masking) and retrieval.py (author retrieval) are different tests over
 # the same dataset/model/mode, so they get separate result trees; dataset and model+mode

@@ -1,17 +1,32 @@
 import os
+import json
+import random
 import torch
 from model import embed_episode
 import config
 
-DATASETS = {"reuters": {"train": "data/C50train", "test": "data/C50test"}}
+DATASETS = {
+    "reuters": {"type": "folders", "train": "data/reuter_50_50/C50train", "test": "data/reuter_50_50/C50test"},
+    "darkreddit": {
+        "type": "jsonl",
+        "train": "data/darkreddit_authorship_attribution_anon/darkreddit_authorship_attribution_train_anon.jsonl",
+        "test": "data/darkreddit_authorship_attribution_anon/darkreddit_authorship_attribution_test_anon.jsonl",
+    },
+}
+
+DARKREDDIT_TRAIN_SAMPLE_SIZE = 50
+DARKREDDIT_SAMPLE_SEED = 0
 
 
 def load_authors(dataset):
-    train_dir = DATASETS[dataset]["train"]
-    return sorted(
-        name for name in os.listdir(train_dir)
-        if os.path.isdir(os.path.join(train_dir, name))
-    )
+    if DATASETS[dataset]["type"] == "folders":
+        train_dir = DATASETS[dataset]["train"]
+        return sorted(
+            name for name in os.listdir(train_dir)
+            if os.path.isdir(os.path.join(train_dir, name))
+        )
+    else:
+        return sorted(load_jsonl_by_author(DATASETS[dataset]["train"]).keys())
 
 
 """
@@ -26,12 +41,29 @@ def load_author_texts(folder):
     return texts
 
 
+def load_jsonl_by_author(path):
+    by_author = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            row = json.loads(line)
+            by_author.setdefault(row["author"], []).append(row["comment"])
+    return by_author
+
+
 def load_train_texts(dataset, author):
-    return load_author_texts(os.path.join(DATASETS[dataset]["train"], author))
+    if DATASETS[dataset]["type"] == "folders":
+        return load_author_texts(os.path.join(DATASETS[dataset]["train"], author))
+
+    comments = load_jsonl_by_author(DATASETS[dataset]["train"])[author]
+    rng = random.Random(DARKREDDIT_SAMPLE_SEED)
+    return rng.sample(comments, DARKREDDIT_TRAIN_SAMPLE_SIZE)
 
 
 def load_test_texts(dataset, author):
-    return load_author_texts(os.path.join(DATASETS[dataset]["test"], author))
+    if DATASETS[dataset]["type"] == "folders":
+        return load_author_texts(os.path.join(DATASETS[dataset]["test"], author))
+
+    return load_jsonl_by_author(DATASETS[dataset]["test"])[author]
 
 
 def get_centroids(dataset, authors, embed_fn=embed_episode, cache_name="centroids.pt"):

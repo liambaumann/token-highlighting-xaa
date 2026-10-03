@@ -28,10 +28,12 @@ else:
     centroids = get_centroids(config.DATASET, authors)
 
 test_cases = [
-    (authors[0], 2),
+    #(authors[0], 2),
     #(authors[1], 0),
     #(authors[2], 0),
-]
+    #(authors[3], 0),
+    #(authors[4], 0),
+] + [(author, 0) for author in authors[5:50]]
 
 for author, doc_index in test_cases:
     author_centroid = centroids[author]

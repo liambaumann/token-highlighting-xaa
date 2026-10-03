@@ -1,6 +1,6 @@
 #!/bin/bash
 # submits a job and shows its log live, starting fresh each time
-# usage: ./run.sh masking_reuters
+# usage: ./run.sh masking
 
 cd "$(dirname "$0")"
 rm -f "$1.log"

@@ -59,6 +59,32 @@ def mean_avg_precision(sims, true_labels):
     return sum(reciprocal_ranks) / len(reciprocal_ranks)
 
 
+def percentile(values, pct):
+    # linear-interpolation percentile (numpy's default method), no numpy dependency
+    sorted_vals = sorted(values)
+    n = len(sorted_vals)
+    if n == 1:
+        return sorted_vals[0]
+    rank = pct / 100 * (n - 1)
+    lower = int(rank)
+    upper = min(lower + 1, n - 1)
+    frac = rank - lower
+    return sorted_vals[lower] + (sorted_vals[upper] - sorted_vals[lower]) * frac
+
+
+def print_dataset_stats(authors):
+    print(f"\nnumber of authors: {len(authors)}")
+    print("test comments per author:")
+    all_lengths = []
+    for author in authors:
+        query_texts = load_test_texts(config.DATASET, author)
+        print(f"  {author}: {len(query_texts)}")
+        all_lengths.extend(content_token_count(text, max_tokens=10**9) for text in query_texts)
+
+    print(f"median token length of test comments: {statistics.median(all_lengths):.1f}")
+    print(f"90th percentile token length of test comments: {percentile(all_lengths, 90):.1f}")
+
+
 def print_retrieval_metrics(sims, true_labels):
     correct, total = top1_accuracy(sims, true_labels)
     correct_top5, total_top5 = soft_top_x_accuracy(sims, true_labels, 5)
@@ -183,11 +209,13 @@ if __name__ == "__main__":
         centroids = get_centroids(config.DATASET, authors, embed_fn=embed_chunked, cache_name="centroids_chunk32.pt")
         sims, true_labels = get_similarity_matrix(authors, centroids, embed_fn=lambda t: embed_chunked([t]))
         print_retrieval_metrics(sims, true_labels)
+        print_dataset_stats(authors)
 
     elif config.MODE == "plain":
         centroids = get_centroids(config.DATASET, authors)
         sims, true_labels = get_similarity_matrix(authors, centroids)
         print_retrieval_metrics(sims, true_labels)
+        print_dataset_stats(authors)
 
     else:
         raise ValueError(f"unknown config.MODE: {config.MODE!r}")

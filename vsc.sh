@@ -1,6 +1,6 @@
 #!/bin/bash
 # sync code to VSC, submit a job, stream its log live, pull results back when it ends
-# usage: ./vsc.sh masking_reuters
+# usage: ./vsc.sh masking
 
 set -e
 cd "$(dirname "$0")"
