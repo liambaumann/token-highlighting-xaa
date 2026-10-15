@@ -23,6 +23,9 @@ data/darkreddit_authorship_attribution_anon/darkreddit_authorship_attribution_te
 
 First run calculates centroids for every author and caches them under `cache/<dataset>_<model>/`
 
-### Session problems with vsc.sh
-Run `ssh -O exit vsc5` to close the old shared connection.
+### Session
 Run `ssh -fN vsc5` and log in.
+To check connection status: `ssh -O check vsc5`
+
+In case or problems:
+Run `ssh -O exit vsc5` to close the old shared connection.

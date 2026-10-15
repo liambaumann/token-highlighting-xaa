@@ -2,8 +2,9 @@ import os
 import json
 import random
 import statistics
+from datetime import datetime
 import torch
-from model import embed, embed_chunked, embed_single, content_token_count, tokenizer
+from model import embed, embed_chunked, embed_single, content_token_count, tokenizer, FINETUNED_MODELS
 from data import load_authors, load_train_texts, load_test_texts, get_centroids
 import config
 
@@ -95,6 +96,57 @@ def print_retrieval_metrics(sims, true_labels):
     print(f"soft top-10 accuracy: {correct_top10}/{total_top10} (~{correct_top10/total_top10:.2%})")
     print(f"mean average precision: {mAP:.2%}")
 
+    return {
+        "top1": {"correct": correct, "total": total},
+        "soft_top5": {"correct": correct_top5, "total": total_top5},
+        "soft_top10": {"correct": correct_top10, "total": total_top10},
+        "map": mAP,
+    }
+
+
+def with_rates(metrics):
+    out = {}
+    for key in ("top1", "soft_top5", "soft_top10"):
+        correct, total = metrics[key]["correct"], metrics[key]["total"]
+        out[key] = {"correct": correct, "total": total, "rate": correct / total}
+    out["map"] = metrics["map"]
+    return out
+
+
+def finetuned_model_info():
+    # None for the base model; for a fine-tuned one, its model.pt and the best/info.json next to it
+    if config.MODEL not in FINETUNED_MODELS:
+        return None
+    model_path = FINETUNED_MODELS[config.MODEL]
+    info_path = os.path.join(os.path.dirname(model_path), "info.json")
+    info = None
+    if os.path.exists(info_path):
+        with open(info_path) as f:
+            info = json.load(f)
+    return {"model_path": model_path, "best_info": info}
+
+
+def save_run_results(started_at, num_authors, num_test_documents, metrics, single32=None):
+    # one file per run, named by its start time, so earlier runs are never overwritten
+    result = {
+        "datetime": started_at.isoformat(timespec="seconds"),
+        "dataset": config.DATASET,
+        "mode": config.MODE,
+        "model": config.MODEL,
+        "num_authors": num_authors,
+        "num_test_documents": num_test_documents,
+        "metrics": with_rates(metrics),
+        "finetuned": finetuned_model_info(),
+    }
+    if single32 is not None:
+        result["single32"] = single32
+
+    os.makedirs(config.RETRIEVAL_RESULTS_DIR, exist_ok=True)
+    result_path = os.path.join(config.RETRIEVAL_RESULTS_DIR, f"test_{started_at:%Y%m%d-%H%M%S}.json")
+    with open(result_path, "w") as f:
+        json.dump(result, f, indent=2)
+    return result_path
+
 
 def pick_excerpt_start(rng, text):
     num_content = content_token_count(text)
@@ -164,20 +216,28 @@ def run_single32_seed(seed, authors):
         }, f, indent=2)
     print(f"saved results to {result_path}")
 
-    return metrics
+    return metrics, centroid_starts, query_starts
 
 
 if __name__ == "__main__":
+    started_at = datetime.now()
+    print(f"dataset: {config.DATASET}, mode: {config.MODE}, model: {config.MODEL}")
+
     authors = load_authors(config.DATASET)
 
     if config.MODE == "single32":
         decode_single32_excerpt(random.Random(config.SINGLE32_SEEDS[0]), load_train_texts(config.DATASET, authors[0])[0])
 
         seed_metrics = []
+        seed_excerpt_starts = {}
         for seed in config.SINGLE32_SEEDS:
             print(f"\n--- single32, seed {seed} ---")
-            metrics = run_single32_seed(seed, authors)
+            metrics, centroid_starts, query_starts = run_single32_seed(seed, authors)
             seed_metrics.append(metrics)
+            seed_excerpt_starts[seed] = {
+                "centroid_excerpt_starts": centroid_starts,
+                "query_excerpt_starts": query_starts,
+            }
             print(f"top-1 accuracy: {metrics['top1']['correct']}/{metrics['top1']['total']} "
                   f"(~{metrics['top1']['correct']/metrics['top1']['total']:.2%})")
             print(f"soft top-5 accuracy: {metrics['soft_top5']['correct']}/{metrics['soft_top5']['total']} "
@@ -205,17 +265,43 @@ if __name__ == "__main__":
               f"{single32_summary['top10'][0]:.2%} ± {single32_summary['top10'][1]:.2%} | "
               f"{single32_summary['map'][0]:.2%} ± {single32_summary['map'][1]:.2%}")
 
+        # run-level metrics pooled over all seeds (every seed has the same test documents,
+        # so each pooled rate equals the mean over seeds); MAP is the mean over seeds
+        pooled_metrics = {
+            key: {
+                "correct": sum(m[key]["correct"] for m in seed_metrics),
+                "total": sum(m[key]["total"] for m in seed_metrics),
+            }
+            for key in ("top1", "soft_top5", "soft_top10")
+        }
+        pooled_metrics["map"] = single32_summary["map"][0]
+
+        summary_keys = {"top1": "top1", "soft_top5": "top5", "soft_top10": "top10", "map": "map"}
+        single32 = {
+            "seeds": config.SINGLE32_SEEDS,
+            "per_seed": {seed: with_rates(m) for seed, m in zip(config.SINGLE32_SEEDS, seed_metrics)},
+            "mean": {key: single32_summary[s][0] for key, s in summary_keys.items()},
+            "std": {key: single32_summary[s][1] for key, s in summary_keys.items()},
+            "excerpt_starts": seed_excerpt_starts,
+        }
+        result_path = save_run_results(started_at, len(authors), seed_metrics[0]["top1"]["total"],
+                                       pooled_metrics, single32=single32)
+
     elif config.MODE == "chunk32":
         centroids = get_centroids(config.DATASET, authors, embed_fn=embed_chunked, cache_name="centroids_chunk32.pt")
         sims, true_labels = get_similarity_matrix(authors, centroids, embed_fn=lambda t: embed_chunked([t]))
-        print_retrieval_metrics(sims, true_labels)
+        metrics = print_retrieval_metrics(sims, true_labels)
         print_dataset_stats(authors)
+        result_path = save_run_results(started_at, len(authors), len(true_labels), metrics)
 
     elif config.MODE == "plain":
         centroids = get_centroids(config.DATASET, authors)
         sims, true_labels = get_similarity_matrix(authors, centroids)
-        print_retrieval_metrics(sims, true_labels)
+        metrics = print_retrieval_metrics(sims, true_labels)
         print_dataset_stats(authors)
+        result_path = save_run_results(started_at, len(authors), len(true_labels), metrics)
 
     else:
         raise ValueError(f"unknown config.MODE: {config.MODE!r}")
+
+    print(f"\nsaved run results to {result_path}")

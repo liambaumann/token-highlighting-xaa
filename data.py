@@ -11,6 +11,7 @@ DATASETS = {
         "type": "jsonl",
         "train": "data/darkreddit_authorship_attribution_anon/darkreddit_authorship_attribution_train_anon.jsonl",
         "test": "data/darkreddit_authorship_attribution_anon/darkreddit_authorship_attribution_test_anon.jsonl",
+        "val": "data/darkreddit_authorship_attribution_anon/darkreddit_authorship_attribution_val_anon.jsonl",
     },
 }
 

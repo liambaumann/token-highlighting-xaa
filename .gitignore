@@ -3,6 +3,8 @@ outputs/
 models/
 cache/
 results/
+backup/
+_to_delete/
 
 check_lengths.py
 .DS_Store

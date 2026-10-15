@@ -2,7 +2,6 @@ import random
 random.seed(0)
 
 import os
-import glob
 import json
 import time
 import config
@@ -14,12 +13,12 @@ from masking import evaluate_budgets
 if config.MODE not in ("plain", "chunk32"):
     raise ValueError(f"run.py supports MODE \"plain\" and \"chunk32\", not {config.MODE!r}. single32 is retrieval only (retrieval.py).")
 
+print(f"perturbation: {config.PERTURBATION}")
+
 budget_percentages = [0.01, 0.03, 0.05, 0.10]
 ngram_sizes = [1, 2, 3]
 
 os.makedirs(config.MASKING_RESULTS_DIR, exist_ok=True)
-for old_file in glob.glob(os.path.join(config.MASKING_RESULTS_DIR, "*.json")):
-    os.remove(old_file)
 
 authors = load_authors(config.DATASET)
 if config.MODE == "chunk32":
@@ -27,13 +26,14 @@ if config.MODE == "chunk32":
 else:
     centroids = get_centroids(config.DATASET, authors)
 
-test_cases = [
+test_cases = [(author, 0) for author in authors[:10]] #[
     #(authors[0], 2),
     #(authors[1], 0),
     #(authors[2], 0),
     #(authors[3], 0),
     #(authors[4], 0),
-] + [(author, 0) for author in authors[5:50]]
+#] #+ [(author, 0) for author in authors[5:50]]
+
 
 for author, doc_index in test_cases:
     author_centroid = centroids[author]
@@ -69,6 +69,7 @@ for author, doc_index in test_cases:
                 "author": author,
                 "doc_index": doc_index,
                 "n": n,
+                "perturbation": config.PERTURBATION,
                 "base_similarity": result["base_similarity"],
                 "budget_results": result["budget_results"],
                 "tokens": result["tokens"],

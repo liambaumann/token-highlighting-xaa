@@ -1,0 +1,17 @@
+#!/bin/bash
+#SBATCH -J finetune_reuters
+#SBATCH --partition zen3_0512_a100x2
+#SBATCH --qos zen3_0512_a100x2_devel
+#SBATCH --gres=gpu:1
+#SBATCH --time=00:10:00
+#SBATCH --output=finetune_reuters.log
+
+module purge
+module load python/3.11.3-gcc-12.2.0-hn7p65z
+source $DATA/venvs/bsc/bin/activate
+cd $DATA/bsc
+
+nvidia-smi
+#python -u -m finetuning.finetune --dataset reuters
+#python -u -m finetuning.finetune --dataset reuters --train-layers 1 --lr 2e-5
+python -u -m finetuning.finetune --dataset darkreddit --train-layers 4 --lr 5e-4

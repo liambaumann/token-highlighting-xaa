@@ -1,0 +1,15 @@
+#!/bin/bash
+#SBATCH -J placeholder_test_darkreddit
+#SBATCH --partition zen3_0512_a100x2
+#SBATCH --qos zen3_0512_a100x2_devel
+#SBATCH --gres=gpu:1
+#SBATCH --time=00:10:00
+#SBATCH --output=placeholder_test_darkreddit.log
+
+module purge
+module load python/3.11.3-gcc-12.2.0-hn7p65z
+source $DATA/venvs/bsc/bin/activate
+cd $DATA/bsc
+
+nvidia-smi
+python -u -m experiments.placeholder_test_darkreddit
