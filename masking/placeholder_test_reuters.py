@@ -1,5 +1,5 @@
 # One-off script: compare occlusion placeholder choices for masking (chunk32, n=1, Reuters).
-# Run from the repo root: python -m experiments.placeholder_test_reuters
+# Run from the repo root: python -m masking.placeholder_test_reuters
 # Does not modify any existing file; reuses model/data/scoring/masking as library code.
 
 import os
@@ -8,10 +8,10 @@ import time
 import random
 import torch
 
-from model import model, tokenizer, device, embed_chunked
+from model import model, tokenizer, device, embed_chunked, embed_episode_from_embeds
 from data import load_authors, load_train_texts, load_test_texts
 from scoring import tokenize
-from masking import select_windows
+from masking.windows import select_windows
 
 random.seed(0)
 
@@ -77,25 +77,6 @@ def embed_delete_variants(token_ids, piece_ranges, keep_lists, batch_size=32):
 
 
 # ---------- placeholder-substitution path: fixed piece length, embeddings replaced ----------
-
-def embed_episode_from_embeds(inputs_embeds, attention_mask):
-    # inputs_embeds: (B, E, L, H); attention_mask: (B, E, L) - repeats LUAR.get_episode_embeddings
-    # but starting from embeddings instead of input_ids
-    B, E, L, H = inputs_embeds.shape
-    flat_embeds = inputs_embeds.reshape(B * E, L, H)
-    flat_mask = attention_mask.reshape(B * E, L)
-    with torch.no_grad():
-        out = model.transformer(
-            inputs_embeds=flat_embeds, attention_mask=flat_mask,
-            return_dict=True, output_hidden_states=False,
-        )
-        comment_embeddings = model.mean_pooling(out["last_hidden_state"], flat_mask)
-        comment_embeddings = comment_embeddings.reshape(B, E, H)
-        episode_embeddings = model.attn_fn(comment_embeddings, comment_embeddings, comment_embeddings)
-        episode_embeddings = episode_embeddings.max(dim=1).values
-        episode_embeddings = model.linear(episode_embeddings)
-    return episode_embeddings.cpu()
-
 
 def build_replace_piece_embeds(token_ids, piece_range, replace_set, placeholder_vec):
     bos_emb = word_embeddings(torch.tensor(BOS_ID, device=device))

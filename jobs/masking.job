@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH -J retrieval
+#SBATCH -J masking
 #SBATCH --partition zen3_0512_a100x2
 #SBATCH --qos zen3_0512_a100x2_devel
 #SBATCH --gres=gpu:1
 #SBATCH --time=00:10:00
-#SBATCH --output=retrieval.log
+#SBATCH --output=masking.log
 
 module purge
 module load python/3.11.3-gcc-12.2.0-hn7p65z
@@ -12,5 +12,4 @@ source $DATA/venvs/bsc/bin/activate
 cd $DATA/bsc
 
 nvidia-smi
-# author retrieval on the test set with the dataset, mode and model set in config.py
-python -u retrieval.py
+python -u -m masking.run_masking

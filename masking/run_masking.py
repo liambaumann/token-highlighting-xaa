@@ -8,10 +8,10 @@ import config
 from model import tokenizer, embed_chunked
 from data import load_authors, load_test_texts, get_centroids
 from scoring import tokenize, occlusion_scores
-from masking import evaluate_budgets
+from masking.windows import evaluate_budgets
 
 if config.MODE not in ("plain", "chunk32"):
-    raise ValueError(f"run.py supports MODE \"plain\" and \"chunk32\", not {config.MODE!r}. single32 is retrieval only (retrieval.py).")
+    raise ValueError(f"masking.run_masking supports MODE \"plain\" and \"chunk32\", not {config.MODE!r}. single32 is retrieval only (retrieval.run_retrieval).")
 
 print(f"perturbation: {config.PERTURBATION}")
 

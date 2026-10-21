@@ -9,8 +9,8 @@ JOB="$1"
 HOST=vsc5
 REMOTE=/gpfs/data/fs71186/baumann/bsc
 
-if [ -z "$JOB" ] || [ ! -f "$JOB.job" ]; then
-  echo "usage: ./vsc.sh <jobname>   (needs <jobname>.job in this folder)"
+if [ -z "$JOB" ] || [ ! -f "jobs/$JOB.job" ]; then
+  echo "usage: ./vsc.sh <jobname>   (needs jobs/<jobname>.job)"
   exit 1
 fi
 
@@ -21,7 +21,7 @@ fi
 ssh -t "$HOST" "
   cd $REMOTE
   rm -f $JOB.log
-  JID=\$(sbatch --parsable $JOB.job) || exit 1
+  JID=\$(sbatch --parsable jobs/$JOB.job) || exit 1
   echo \"submitted job \$JID\"
   squeue --start -j \$JID
   # until the log appears: a status line every 60s, and immediately when the state changes

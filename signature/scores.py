@@ -3,7 +3,7 @@
 # signature.tokens builds the per-author token signatures from these files, without the model.
 # Run from the repo root: python -u -m signature.scores
 #
-# Resumable as signature.run: a run stops starting new comments after TIME_BUDGET_SECONDS, and
+# Resumable as keep_top_k.run_keep: a run stops starting new comments after TIME_BUDGET_SECONDS, and
 # the next run continues the same series with the comments not done yet, so one series can span
 # several 10-minute devel jobs. Every run writes its own timestamped file, nothing is overwritten.
 
@@ -18,8 +18,8 @@ import config
 from model import tokenizer, embed_chunked, content_token_count
 from data import DATASETS, load_authors, load_author_texts, load_jsonl_by_author, get_centroids
 from scoring import tokenize, occlusion_scores
-from .results import results_dir, latest_series, series_documents
-from .tokens import SCORES_PREFIX, load_score_runs
+from runs import results_dir, load_runs, latest_series, series_documents
+from .tokens import RESULTS_ROOT, SCORES_PREFIX
 
 if config.MODE not in ("plain", "chunk32"):
     raise ValueError(f"signature.scores supports MODE \"plain\" and \"chunk32\", not {config.MODE!r}.")
@@ -33,7 +33,7 @@ N = 1
 MIN_CONTENT_TOKENS = N
 # wall time from script start after which no new comment is started (devel jobs get 10 min)
 TIME_BUDGET_SECONDS = 8 * 60
-# seconds per (sequence token x embedded variant), as in signature.run; replaced by this run's
+# seconds per (sequence token x embedded variant), as in keep_top_k.run_keep; replaced by this run's
 # own measurement after the first comment
 INITIAL_SECONDS_PER_TOKEN_VARIANT = 0.06e-3
 
@@ -119,11 +119,11 @@ def main():
         centroids = get_centroids(config.DATASET, authors)
 
     plan, skipped = plan_comments(authors)
-    out_dir = results_dir(config.DATASET, config.PERTURBATION, config.MODEL_MODE_NAME)
+    out_dir = results_dir(RESULTS_ROOT, config.DATASET, config.PERTURBATION, config.MODEL_MODE_NAME)
     os.makedirs(out_dir, exist_ok=True)
 
     # continue the latest series if it has the same settings and plan and isn't complete yet
-    series, series_runs = latest_series(load_score_runs(out_dir))
+    series, series_runs = latest_series(load_runs(out_dir, SCORES_PREFIX))
     done_docs = series_documents(series_runs)
     last = series_runs[-1] if series_runs else None
     if last is None or last["settings"] != SETTINGS_INFO or last["plan"] != plan or len(done_docs) >= len(plan):

@@ -201,7 +201,7 @@ def embed_variants_delete(input_ids, attention_mask, keep_lists):
 
 def embed_variants_mask(input_ids, attention_mask, keep_lists):
     # dropped positions keep their place; token id replaced with the mask token. <s>, </s>
-    # and padding are never dropped (masking.py never includes them in a candidate position).
+    # and padding are never dropped (masking/windows.py never includes them in a candidate position).
     mask_id = tokenizer.mask_token_id
     num_tokens = input_ids.shape[1]
     token_ids = input_ids[0].tolist()
@@ -250,11 +250,29 @@ def embed_variants_mask(input_ids, attention_mask, keep_lists):
     return torch.cat(embeddings, dim=0)
 
 
+def embed_episode_from_embeds(inputs_embeds, attention_mask):
+    # inputs_embeds: (B, E, L, H); attention_mask: (B, E, L) - repeats LUAR.get_episode_embeddings
+    # but starting from embeddings instead of input_ids
+    B, E, L, H = inputs_embeds.shape
+    flat_embeds = inputs_embeds.reshape(B * E, L, H)
+    flat_mask = attention_mask.reshape(B * E, L)
+    with torch.no_grad():
+        out = model.transformer(
+            inputs_embeds=flat_embeds, attention_mask=flat_mask,
+            return_dict=True, output_hidden_states=False,
+        )
+        comment_embeddings = model.mean_pooling(out["last_hidden_state"], flat_mask)
+        comment_embeddings = comment_embeddings.reshape(B, E, H)
+        episode_embeddings = model.attn_fn(comment_embeddings, comment_embeddings, comment_embeddings)
+        episode_embeddings = episode_embeddings.max(dim=1).values
+        episode_embeddings = model.linear(episode_embeddings)
+    return episode_embeddings.cpu()
+
+
 def embed_variants_doc_mean(input_ids, attention_mask, keep_lists):
     # dropped positions keep their place; word embedding replaced with the mean word embedding
     # of this document's own (unperturbed) content tokens. Needs embeddings, not ids, so LUAR
-    # is run from inputs_embeds the same way experiments/placeholder_test_reuters.py does.
-    from experiments.placeholder_test_reuters import embed_episode_from_embeds
+    # is run from inputs_embeds with embed_episode_from_embeds.
 
     num_tokens = input_ids.shape[1]
     token_ids = input_ids[0].tolist()

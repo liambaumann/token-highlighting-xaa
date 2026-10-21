@@ -1,13 +1,13 @@
-# plots for the signature (keep-top-k) experiment, from saved results only - no model needed.
-# Run from the repo root: python -m signature.plot
-# One page per results/signature/{dataset}/{perturbation}/{model_mode} folder, written to
-# outputs/{dataset}/{perturbation}/{model_mode}/signature.html, plotting that folder's latest series.
+# plots for the keep-top-k experiment, from saved results only - no model needed.
+# Run from the repo root: python -m keep_top_k.plot
+# One page per results/keep_top_k/{dataset}/{perturbation}/{model_mode} folder, written to
+# outputs/{dataset}/{perturbation}/{model_mode}/keep_top_k.html, plotting that folder's latest series.
 
 import os
 import json
 from reporting.chart import PAGE_HEAD, OVERVIEW_LEGEND_PLUGIN_OPTIONS, RANDOM_RGB, build_note_html
-from .keep import SETTINGS
-from .results import RESULTS_ROOT, load_runs, latest_series, series_documents, aggregate
+from runs import load_runs, latest_series, series_documents
+from .keep import RESULTS_ROOT, SETTINGS, aggregate
 
 OUTPUTS_ROOT = "outputs"
 
@@ -148,13 +148,13 @@ def main():
             if not os.path.isdir(perturbation_dir):
                 continue
             for model_mode_name in sorted(os.listdir(perturbation_dir)):
-                series, series_runs = latest_series(load_runs(os.path.join(perturbation_dir, model_mode_name)))
+                series, series_runs = latest_series(load_runs(os.path.join(perturbation_dir, model_mode_name), "keep_"))
                 if series is None:
                     continue
 
                 output_dir = os.path.join(OUTPUTS_ROOT, dataset_name, perturbation_name, model_mode_name)
                 os.makedirs(output_dir, exist_ok=True)
-                output_path = os.path.join(output_dir, "signature.html")
+                output_path = os.path.join(output_dir, "keep_top_k.html")
                 with open(output_path, "w") as f:
                     f.write(build_page(dataset_name, perturbation_name, model_mode_name, series, series_runs))
                 print(f"saved plots to {output_path}")

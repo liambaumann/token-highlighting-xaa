@@ -22,9 +22,10 @@ SINGLE32_SEEDS = [0, 1, 2]
 
 MODEL_MODE_NAME = f"{MODEL}_{MODE}"
 
-# run.py (occlusion/masking) and retrieval.py (author retrieval) are different tests over
-# the same dataset/model/mode, so they get separate result trees; dataset and model+mode
-# each get their own folder level, so e.g. "reuters" and "chunk32" aren't welded together.
+# masking/run_masking.py (occlusion/masking) and retrieval/run_retrieval.py (author retrieval)
+# are different tests over the same dataset/model/mode, so they get separate result trees;
+# dataset and model+mode each get their own folder level, so e.g. "reuters" and "chunk32"
+# aren't welded together.
 # masking results also fork on PERTURBATION; retrieval doesn't perturb anything, so its
 # paths stay as they were
 MASKING_RESULTS_DIR = f"results/masking/{DATASET}/{PERTURBATION}/{MODEL_MODE_NAME}"

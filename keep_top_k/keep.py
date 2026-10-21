@@ -1,6 +1,9 @@
 # keep-top-k selection: which content positions of a document survive when only its k
 # highest-scoring tokens / n-grams are kept. Works on the score lists from
-# scoring.occlusion_scores, no model needed.
+# scoring.occlusion_scores, no model needed. Also the aggregation of saved keep-top-k results
+# (metrics, aggregate), so keep_top_k.plot can use it without loading LUAR.
+
+RESULTS_ROOT = "results/keep_top_k"
 
 NGRAM_SIZES = [1, 2, 3]
 COMBINED = "n1-3"
@@ -18,7 +21,7 @@ def window_ranking(scores, num_tokens, n):
 
 
 def keep_top_windows(ranking, n, k):
-    # non-overlapping windows in rank order (as masking.select_windows) until k tokens are kept,
+    # non-overlapping windows in rank order (as masking.windows.select_windows) until k tokens are kept,
     # the window that crosses k cropped to its leftmost tokens. Greedy non-overlapping windows
     # can leave gaps shorter than n, so if they run out before k, continue down the same ranking
     # with the still-free tokens of partly overlapping windows.
@@ -63,3 +66,33 @@ def rank_average_order(scores_by_n, num_tokens):
             rank_sums[p] += rank
     # same order as the mean rank, every token is summed over the same number of n
     return sorted(positions, key=lambda p: rank_sums[p])
+
+
+def metrics(entries):
+    # entries: {"similarity", "rank"} per document - top-1 and MAP as in metrics.py
+    # (MAP there is the mean reciprocal rank of the true author)
+    num = len(entries)
+    return {
+        "similarity": sum(e["similarity"] for e in entries) / num,
+        "top1": sum(1 for e in entries if e["rank"] == 1) / num,
+        "map": sum(1.0 / e["rank"] for e in entries) / num,
+    }
+
+
+def aggregate(documents, max_k):
+    # mean over documents of the baseline and of every (setting, k); a document with k or fewer
+    # content tokens counts with its unchanged (baseline) values at that k
+    curves = {}
+    for setting in SETTINGS:
+        curves[setting] = []
+        for i in range(max_k):
+            entries = [doc["keep"][setting][i] for doc in documents]
+            row = metrics(entries)
+            row["k"] = entries[0]["k"]
+            row["num_unchanged"] = sum(1 for e in entries if e["unchanged"])
+            curves[setting].append(row)
+    return {
+        "num_documents": len(documents),
+        "baseline": metrics([doc["baseline"] for doc in documents]),
+        "curves": curves,
+    }

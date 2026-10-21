@@ -3,7 +3,7 @@ import json
 from model import tokenizer
 import config
 from .highlight import save_highlighted_html
-from .chart import (
+from reporting.chart import (
     build_overview_chart_html, no_results_chart_html, OVERVIEW_SELECTIONS,
     PAGE_HEAD, build_note_html,
 )
@@ -15,7 +15,7 @@ NS = [1, 2, 3]
 OVERVIEW_ROW_MODES = ["plain", "chunk32"]
 PERTURBATIONS = ["delete", "mask", "doc_mean"]
 
-# matches run.py's budget_percentages = [0.01, 0.03, 0.05, 0.10], plus the 0%/no-removal point
+# matches masking/run_masking.py's budget_percentages = [0.01, 0.03, 0.05, 0.10], plus the 0%/no-removal point
 X_LABELS = [0, 1, 3, 5, 10]
 
 

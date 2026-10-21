@@ -7,7 +7,7 @@ import time
 import torch
 from model import chunk_pieces
 from data import load_train_texts
-from retrieval import top1_accuracy, mean_avg_precision
+from metrics import top1_accuracy, mean_avg_precision
 from finetuning.splits import get_split
 
 
@@ -28,7 +28,7 @@ def embed_chunk32(model, texts):
 
 
 def centroid_texts(dataset, split, author):
-    # darkreddit uses the same 50-comment sample as retrieval.py, so the numbers stay comparable
+    # darkreddit uses the same 50-comment sample as retrieval/run_retrieval.py, so the numbers stay comparable
     if dataset == "darkreddit":
         return load_train_texts(dataset, author)
     return split[author]["train"]

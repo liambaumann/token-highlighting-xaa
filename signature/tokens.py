@@ -15,8 +15,9 @@ import html
 from datetime import datetime
 import config
 from reporting.chart import PAGE_HEAD
-from .results import results_dir, latest_series, series_documents
+from runs import results_dir, load_runs, latest_series, series_documents
 
+RESULTS_ROOT = "results/signature"
 SCORES_PREFIX = "scores_"
 TOKENS_PREFIX = "tokens_"
 OUTPUTS_ROOT = "outputs"
@@ -45,21 +46,6 @@ PERTURBATION_DESCRIPTIONS = {
     "mask": "replaced by the tokenizer's mask token",
     "delete": "deleted from the comment",
 }
-
-
-def load_score_runs(directory):
-    # every signature.scores run file in the folder, oldest first (file names are start
-    # timestamps); each run gets its file name under "file"
-    if not os.path.isdir(directory):
-        return []
-    runs = []
-    for fname in sorted(os.listdir(directory)):
-        if fname.startswith(SCORES_PREFIX) and fname.endswith(".json"):
-            with open(os.path.join(directory, fname)) as f:
-                run = json.load(f)
-            run["file"] = fname
-            runs.append(run)
-    return runs
 
 
 def author_signatures(documents, authors):
@@ -229,8 +215,8 @@ def build_page(result):
 
 def main():
     created_at = datetime.now()
-    scores_dir = results_dir(config.DATASET, config.PERTURBATION, config.MODEL_MODE_NAME)
-    series, series_runs = latest_series(load_score_runs(scores_dir))
+    scores_dir = results_dir(RESULTS_ROOT, config.DATASET, config.PERTURBATION, config.MODEL_MODE_NAME)
+    series, series_runs = latest_series(load_runs(scores_dir, SCORES_PREFIX))
     if series is None:
         print(f"no {SCORES_PREFIX}*.json files in {scores_dir} - run signature.scores first")
         return

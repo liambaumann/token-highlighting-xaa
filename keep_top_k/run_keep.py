@@ -2,7 +2,7 @@
 # (by occlusion score), fill everything else per config.PERTURBATION, and measure similarity to
 # the author centroid and author retrieval (top-1, MAP) for k = 1..MAX_K, with n = 1, 2, 3 and
 # the combined 1-3 ranking. Baseline is the full document.
-# Run from the repo root: python -u -m signature.run
+# Run from the repo root: python -u -m keep_top_k.run_keep
 #
 # Resumable: a run stops starting new documents after TIME_BUDGET_SECONDS, and the next run
 # continues the same series with the documents not done yet, so one series can span several
@@ -19,11 +19,11 @@ import config
 from model import tokenizer, embed_chunked, embed_variants, content_token_count
 from data import load_authors, load_test_texts, get_centroids
 from scoring import tokenize, occlusion_scores
-from .keep import NGRAM_SIZES, COMBINED, SETTINGS, window_ranking, keep_top_windows, rank_average_order
-from .results import results_dir, load_runs, latest_series, series_documents, aggregate
+from runs import results_dir, load_runs, latest_series, series_documents
+from .keep import RESULTS_ROOT, NGRAM_SIZES, COMBINED, SETTINGS, window_ranking, keep_top_windows, rank_average_order, aggregate
 
 if config.MODE not in ("plain", "chunk32"):
-    raise ValueError(f"signature.run supports MODE \"plain\" and \"chunk32\", not {config.MODE!r}.")
+    raise ValueError(f"keep_top_k.run_keep supports MODE \"plain\" and \"chunk32\", not {config.MODE!r}.")
 
 # test documents per author; Reuters is ~54s per document (512 tokens), darkreddit ~8s
 DOCS_PER_AUTHOR = {"darkreddit": 5, "reuters": 1}
@@ -73,7 +73,7 @@ def plan_documents(authors):
 
 
 def load_saved_scores(author, doc_index, n, tokens):
-    # occlusion scores from an earlier run.py run with the same dataset, perturbation, model and
+    # occlusion scores from an earlier masking.run_masking run with the same dataset, perturbation, model and
     # mode (its folder), if it exists and tokenized this document the same way
     path = os.path.join(config.MASKING_RESULTS_DIR, f"{author}_{doc_index}_n{n}.json")
     if not os.path.exists(path):
@@ -87,7 +87,7 @@ def load_saved_scores(author, doc_index, n, tokens):
 
 def similarities_and_ranks(embeddings, centroid_matrix, true_index):
     # cosine similarity to the true author's centroid, and the true author's rank among all
-    # centroids (1 = retrieved first), ranked the same way retrieval.mean_avg_precision does
+    # centroids (1 = retrieved first), ranked the same way metrics.mean_avg_precision does
     sims = torch.nn.functional.cosine_similarity(
         embeddings.unsqueeze(1), centroid_matrix.unsqueeze(0), dim=2
     )
@@ -204,11 +204,11 @@ def main():
     centroid_matrix = torch.stack([centroids[a] for a in authors])
 
     plan, skipped = plan_documents(authors)
-    out_dir = results_dir(config.DATASET, config.PERTURBATION, config.MODEL_MODE_NAME)
+    out_dir = results_dir(RESULTS_ROOT, config.DATASET, config.PERTURBATION, config.MODEL_MODE_NAME)
     os.makedirs(out_dir, exist_ok=True)
 
     # continue the latest series if it has the same settings and plan and isn't complete yet
-    series, series_runs = latest_series(load_runs(out_dir))
+    series, series_runs = latest_series(load_runs(out_dir, "keep_"))
     done_docs = series_documents(series_runs)
     last = series_runs[-1] if series_runs else None
     if last is None or last["settings"] != SETTINGS_INFO or last["plan"] != plan or len(done_docs) >= len(plan):
