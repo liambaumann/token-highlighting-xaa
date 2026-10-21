@@ -4,7 +4,7 @@ DATASET = "darkreddit"
 
 # like "luar-mud", "luar-mud-ft-darkreddit"
 #MODEL = "luar-mud-ft-darkreddit"
-MODEL = "luar-mud-ft-darkreddit-top4"
+MODEL = "luar-mud"
 
 # "plain": one 512-token sequence per document
 # "chunk32": content split into 30-token pieces (+<s></s>, padded to 32), one episode
