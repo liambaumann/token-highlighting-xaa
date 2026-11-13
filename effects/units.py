@@ -90,6 +90,10 @@ UNIT_TYPES = {
 
 # n-gram sizes: n = 1 is the single unit, n >= 2 are n consecutive units of the unit type
 NGRAM_SIZES = [1, 2, 3]
+# n = 1, 2 and 3 combined into one signature (matching and diagnostics only, from the single-n results)
+COMBINED = "1-3"
+# the sections of a unit type's pages, in order
+SECTION_NS = NGRAM_SIZES + [COMBINED]
 
 
 def ngrams(units, n):
@@ -113,15 +117,16 @@ def unit_key(name):
     return tuple(name) if isinstance(name, list) else name
 
 
-# how whitespace characters are shown in tables
-WHITESPACE_DISPLAY = {" ": "␣", "\n": "\\n", "\t": "\\t", "\r": "\\r"}
+# bytes -> the tokenizer's printable characters (Ġ for space, Ċ for line break, ...), for display
+BYTE_ENCODER = {byte: char for char, byte in BYTE_DECODER.items()}
 
 
 def display_unit(name, unit):
-    # a unit's identity as shown in tables: word whitespace units made visible, everything else as
-    # is; an n-gram as its units joined by a single space
+    # a unit's identity as shown in tables: word whitespace units in the tokenizer's notation, as on
+    # the subtoken pages (space Ġ, line break Ċ, empty line ĊĊ), everything else as is; an n-gram as
+    # its units joined by a single space
     if isinstance(name, (list, tuple)):
         return " ".join(display_unit(part, unit) for part in name)
     if unit == "word" and name.isspace():
-        return "".join(WHITESPACE_DISPLAY.get(char, f"\\u{ord(char):04x}") for char in name)
+        return "".join(BYTE_ENCODER[byte] for byte in name.encode("utf-8"))
     return name

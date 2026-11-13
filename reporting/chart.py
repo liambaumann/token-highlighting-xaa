@@ -2,8 +2,7 @@ import json
 
 FONT_STACK = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
 
-PAGE_HEAD = f"""
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+FONT_HEAD = f"""
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -11,11 +10,54 @@ PAGE_HEAD = f"""
     body {{ font-family: {FONT_STACK}; color: #1a1a1a; }}
     h1, h2, h3, h4 {{ font-weight: 600; }}
 </style>
+"""
+
+PAGE_HEAD = f"""
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+{FONT_HEAD}
 <script>
     Chart.defaults.animation = false;
     Chart.defaults.font.family = {json.dumps(FONT_STACK)};
 </script>
 """
+
+# the head of pages whose charts are Vega-Lite specs (build_vega_chart_html)
+VEGA_PAGE_HEAD = f"""
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vega/5.30.0/vega.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vega-lite/5.21.0/vega-lite.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vega-embed/6.26.0/vega-embed.min.js"></script>
+{FONT_HEAD}
+"""
+
+# shared look of the Vega-Lite charts: page font, recessive grid and axes, legend below the plot
+VEGA_CONFIG = {
+    "font": FONT_STACK,
+    "view": {"stroke": None},
+    "axis": {"gridColor": "#ececec", "domainColor": "#999", "tickColor": "#999", "labelColor": "#444",
+             "titleColor": "#444", "titleFontWeight": 500, "labelFontSize": 11, "titleFontSize": 11},
+    "legend": {"orient": "bottom", "title": None, "labelFontSize": 11, "labelColor": "#444",
+               "symbolType": "stroke", "symbolStrokeWidth": 2, "columnPadding": 12},
+}
+
+
+def vega_spec(spec):
+    # spec: a Vega-Lite spec without config or schema
+    return {"$schema": "https://vega.github.io/schema/vega-lite/v5.json", **spec, "config": VEGA_CONFIG}
+
+
+def build_vega_chart_html(chart_id, title, spec, width):
+    # width: the div's width in px; the chart's "⋯" menu saves it as SVG or PNG
+    return f"""
+    <div style="width: {width}px;">
+        <h4>{title}</h4>
+        <div id="{chart_id}"></div>
+    </div>
+    <script>
+    vegaEmbed("#{chart_id}", {json.dumps(vega_spec(spec))}, {{
+        actions: {{ export: true, source: false, compiled: false, editor: false }}, renderer: "svg"
+    }});
+    </script>
+    """
 
 # plain small-box legend (no usePointStyle - that combo has sizing quirks across Chart.js
 # versions); hides the band datasets (empty label) so only the three mean/value lines show

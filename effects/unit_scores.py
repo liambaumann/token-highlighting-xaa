@@ -29,7 +29,7 @@ import torch
 import config
 from reporting.chart import PAGE_HEAD
 from runs import results_dir, load_runs, latest_series
-from .units import UNIT_TYPES, NGRAM_SIZES, display_unit, unit_key
+from .units import UNIT_TYPES, NGRAM_SIZES, SECTION_NS, display_unit, unit_key
 
 # as in effects.cache, which isn't imported here since it loads LUAR
 RESULTS_ROOT = "results/effects"
@@ -308,10 +308,10 @@ def unit_dir(unit, n):
 
 
 def latest_sections(unit, prefix):
-    # {n: the latest result file of prefix for the unit type and n}, in order n = 1, 2, 3, for every n
-    # that has one (result files are written complete); each with its file name under "file"
+    # {n: the latest result file of prefix for the unit type and n}, in order n = 1, 2, 3, 1-3, for
+    # every n that has one (result files are written complete); each with its file name under "file"
     sections = {}
-    for n in NGRAM_SIZES:
+    for n in SECTION_NS:
         runs = load_runs(unit_dir(unit, n), prefix)
         if runs:
             sections[n] = runs[-1]

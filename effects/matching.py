@@ -2,7 +2,8 @@
 # attribute unseen comments? Two matchers, against a random-units baseline and the retrieval
 # ceiling. Runs locally on CPU; uses saved embeddings only, nothing is embedded.
 # Run from the repo root: python -m effects.matching   (--unit: unit type, default subtoken;
-# --n: n-gram size, default 1; for n >= 2 every "unit" below is an n-gram of units)
+# --n: n-gram size, default 1; for n >= 2 every "unit" below is an n-gram of units; --n 1-3: the
+# n = 1, 2 and 3 results combined, see main_combined)
 #
 # Data roles: val (the cached comments) gives the signatures, the Δ-vectors and the average
 # embedding; train (all train comments) only trains the SVMs; test (all test comments) is only
@@ -37,11 +38,13 @@ import scipy.sparse
 from sklearn.svm import LinearSVC
 from sklearn.exceptions import ConvergenceWarning
 import config
+from model import tokenizer
 from data import DATASETS, load_jsonl_by_author, load_test_texts
+from scoring import tokenize
 from metrics import top1_accuracy
 from runs import load_runs
-from reporting.chart import PAGE_HEAD, OVERVIEW_LEGEND_PLUGIN_OPTIONS, TOP_RGB, BOTTOM_RGB, RANDOM_RGB, build_note_html
-from .units import UNIT_TYPES, NGRAM_SIZES, comment_units, unit_key
+from reporting.chart import VEGA_PAGE_HEAD, TOP_RGB, BOTTOM_RGB, RANDOM_RGB, build_note_html, build_vega_chart_html
+from .units import UNIT_TYPES, NGRAM_SIZES, COMBINED, comment_units, unit_key
 from .unit_scores import (
     DAMPING, DAMPING_D20, SIGNATURE_ROWS, DAMPING_NOTE, build_header_html, build_footer_html, section_heading,
     footer_prefix, save_page, unit_dir, latest_sections,
@@ -175,21 +178,24 @@ def signature_sources(scoring, frequency):
     return {"frequency": frequency} | {key: scoring["scores"] for key, _ in SCORES if key != "frequency"}
 
 
-def load_train(authors, unit, ngram=1):
-    # all train comments: (unit counts per comment, author index per comment)
+def load_train(authors, unit, ngram=1, count=None):
+    # all train comments: (unit counts per comment, author index per comment); count: text ->
+    # (counts, denominator), unit_counts by default
+    count = count or (lambda text: unit_counts(text, unit, ngram))
     train = load_jsonl_by_author(DATASETS[config.DATASET]["train"])
     counts = []
     labels = []
     for i, author in enumerate(authors):
         for text in train[author]:
-            counts.append(unit_counts(text, unit, ngram))
+            counts.append(count(text))
             labels.append(i)
     return counts, labels
 
 
-def load_test(directory, series, authors, unit, ngram=1):
+def load_test(directory, series, authors, unit, ngram=1, count=None):
     # all test comments, in the order of the cache's test plan: their cached embeddings,
-    # unit counts and author indices
+    # unit counts (count as in load_train) and author indices
+    count = count or (lambda text: unit_counts(text, unit, ngram))
     runs = [run for run in load_runs(directory, TEST_PREFIX) if run["series"] == series]
     if not runs:
         raise SystemExit(f"no {TEST_PREFIX}*.json files of cache series {series} in {directory}")
@@ -204,7 +210,7 @@ def load_test(directory, series, authors, unit, ngram=1):
 
     texts = {author: load_test_texts(config.DATASET, author) for author in authors}
     embeddings = torch.stack([rows[(author, doc_index)] for author, doc_index in plan]).double()
-    counts = [unit_counts(texts[author][doc_index], unit, ngram) for author, doc_index in plan]
+    counts = [count(texts[author][doc_index]) for author, doc_index in plan]
     labels = torch.tensor([authors.index(author) for author, _ in plan])
     return embeddings, counts, labels, [run["file"] for run in runs]
 
@@ -230,6 +236,95 @@ def random_signatures(scores, authors, k, seed):
     return signatures
 
 
+# ---------- n = 1-3: the n = 1, 2 and 3 results combined ----------
+
+def tag_entries(ranking, n, offset):
+    # copies of a ranking's entries with their n and their delta rows moved by offset, the start of
+    # their n's corrected deltas in the concatenated tensor
+    return {
+        author: [dict(entry, ngram=n, delta_row=entry["delta_row"] + offset) for entry in entries]
+        for author, entries in ranking.items()
+    }
+
+
+def turns(lists):
+    # the first item of every list, then the second of every list, ... (lists running out are skipped)
+    return [items[i] for i in range(max((len(items) for items in lists), default=0)) for items in lists if i < len(items)]
+
+
+def merge_by_rank(rankings, authors, key):
+    # rankings: {n: {author: entries}}; per author one ranking under rank_{key}: the best unit of
+    # n = 1, of n = 2, of n = 3, then the second-best of each, ...; no overlap filtering
+    merged = {}
+    for author in authors:
+        ranked = [sorted(rankings[n][author], key=lambda entry: entry[f"rank_{key}"]) for n in NGRAM_SIZES]
+        merged[author] = [dict(entry, **{f"rank_{key}": rank}) for rank, entry in enumerate(turns(ranked), start=1)]
+    return merged
+
+
+def merged_random_signatures(scores_by_n, authors, k, seed):
+    # k units per author: for each n, k drawn at random from that n's cached units (as
+    # random_signatures, one rng per seed and k), merged in turns as merge_by_rank; "all": all of them
+    rng = random.Random(seed)
+    signatures = {}
+    for author in authors:
+        drawn = []
+        for n in NGRAM_SIZES:
+            entries = sorted(scores_by_n[n][author], key=lambda entry: entry["unit"])
+            drawn.append(entries if k == "all" else rng.sample(entries, min(k, len(entries))))
+        merged = turns(drawn)
+        signatures[author] = merged if k == "all" else merged[:k]
+    return signatures
+
+
+def combined_unit_counts(text, unit):
+    # every n-gram (n = 1, 2, 3) of the comment with its occurrences divided by the comment's number
+    # of n-grams of the same n; denominator 1, as tf_matrix divides by it. Tokenized and split as
+    # effects.cache does (first 510 content tokens).
+    input_ids, _ = tokenize(text)
+    tokens = tokenizer.convert_ids_to_tokens(input_ids[0])
+    values = Counter()
+    for n in NGRAM_SIZES:
+        occurrences = [name for name, _ in comment_units(tokens, unit, n)]
+        values.update({name: count / len(occurrences) for name, count in Counter(occurrences).items()})
+    return values, 1
+
+
+def combined_signature_sources(scorings, frequencies, authors, offsets):
+    # {signature type: merged ranking} from the single-n scorings and frequency rankings ({n: ...}),
+    # and the tagged scores per n for the random draws
+    scores_by_n = {n: tag_entries(scorings[n]["scores"], n, offsets[n]) for n in NGRAM_SIZES}
+    frequency_by_n = {n: tag_entries(frequencies[n], n, offsets[n]) for n in NGRAM_SIZES}
+    sources = {
+        key: merge_by_rank(frequency_by_n if key == "frequency" else scores_by_n, authors, key)
+        for key, _ in SCORES
+    }
+    return sources, scores_by_n
+
+
+def load_combined_scorings(unit, scoring_files=None):
+    # per n the scoring (the latest, or the named file) and its corrected deltas, concatenated in
+    # order n = 1, 2, 3; returns ({n: scoring}, deltas, {n: row offset})
+    scorings, deltas, offsets = {}, [], {}
+    offset = 0
+    for n in NGRAM_SIZES:
+        directory = unit_dir(unit, n)
+        if scoring_files is None:
+            scoring, corrected = load_scoring(directory)
+        else:
+            with open(os.path.join(directory, scoring_files[n])) as f:
+                scoring = json.load(f)
+            scoring["file"] = scoring_files[n]
+            corrected = torch.load(os.path.join(directory, scoring["deltas_file"]))["corrected"].double()
+        scorings[n], offsets[n] = scoring, offset
+        deltas.append(corrected)
+        offset += corrected.shape[0]
+    authors = scorings[1]["authors"]
+    if any(scorings[n]["authors"] != authors for n in NGRAM_SIZES):
+        raise SystemExit("the n = 1, 2, 3 scorings have different authors")
+    return scorings, torch.cat(deltas), offsets
+
+
 # ---------- matchers ----------
 
 def tf_matrix(comment_counts, features):
@@ -246,8 +341,14 @@ def tf_matrix(comment_counts, features):
     return scipy.sparse.csr_matrix((values, (rows, cols)), shape=(len(comment_counts), len(features)))
 
 
+def feature_order(name):
+    # features sorted by n, then by identity: for a single n the plain sorted order; single units
+    # (strings) and n-grams (tuples) of n = 1-3 can't be compared directly
+    return (1, (name,)) if isinstance(name, str) else (len(name), name)
+
+
 def fit_tf_svm(signatures, train_counts, train_labels):
-    features = sorted({unit_key(entry["unit"]) for entries in signatures.values() for entry in entries})
+    features = sorted({unit_key(entry["unit"]) for entries in signatures.values() for entry in entries}, key=feature_order)
     svm = LinearSVC(class_weight="balanced", random_state=SVM_RANDOM_STATE)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", ConvergenceWarning)
@@ -297,69 +398,64 @@ def format_rate(value):
     return f"{value:.2%}"
 
 
-def build_chart_html(chart_id, title, method_results, ceiling):
-    labels = [str(k) for k in KS]
-    datasets = []
-    for key, label in SCORES:
-        rgb, dashed = SCORE_STYLES[key]
-        color = f"rgb({rgb[0]}, {rgb[1]}, {rgb[2]})"
-        datasets.append({
-            "label": label,
-            "data": [round(method_results[key][str(k)]["top1"], 4) for k in KS],
-            "borderColor": color, "backgroundColor": color, "borderWidth": 2, "pointRadius": 3,
-            **({"borderDash": [4, 3]} if dashed else {}),
-        })
-    random_results = method_results["random"]
-    band_color = f"rgba({RANDOM_RGB[0]}, {RANDOM_RGB[1]}, {RANDOM_RGB[2]}, 0.2)"
-    random_color = f"rgb({RANDOM_RGB[0]}, {RANDOM_RGB[1]}, {RANDOM_RGB[2]})"
-    # min-max band of the random baseline (two unlabeled datasets, the second filled up to the first)
-    datasets.append({
-        "label": "", "data": [round(random_results[str(k)]["max"], 4) for k in KS],
-        "borderColor": "transparent", "backgroundColor": band_color, "borderWidth": 0, "pointRadius": 0, "fill": False,
-    })
-    datasets.append({
-        "label": "", "data": [round(random_results[str(k)]["min"], 4) for k in KS],
-        "borderColor": "transparent", "backgroundColor": band_color, "borderWidth": 0, "pointRadius": 0, "fill": "-1",
-    })
-    datasets.append({
-        "label": RANDOM_LABEL,
-        "data": [round(random_results[str(k)]["mean"], 4) for k in KS],
-        "borderColor": random_color, "backgroundColor": random_color, "borderWidth": 2, "pointRadius": 3,
-    })
-    ceiling_color = f"rgb({CEILING_RGB[0]}, {CEILING_RGB[1]}, {CEILING_RGB[2]})"
-    datasets.append({
-        "label": CEILING_LABEL,
-        "data": [round(ceiling["top1"], 4) for _ in KS],
-        "borderColor": ceiling_color, "backgroundColor": ceiling_color, "borderWidth": 2, "borderDash": [6, 4],
-        "pointRadius": 0, "pointHoverRadius": 0,
-    })
+def hex_color(rgb):
+    return "#" + "".join(f"{c:02x}" for c in rgb)
 
-    return f"""
-    <div style="width: 480px;">
-        <h4>{title}</h4>
-        <canvas id="{chart_id}" width="480" height="360" style="width: 480px; height: 360px;"></canvas>
-    </div>
-    <script>
-    new Chart(document.getElementById("{chart_id}"), {{
-        type: 'line',
-        data: {{
-            labels: {json.dumps(labels)},
-            datasets: {json.dumps(datasets)}
-        }},
-        options: {{
-            responsive: false,
-            interaction: {{ mode: 'index', intersect: false }},
-            plugins: {{
-                legend: {OVERVIEW_LEGEND_PLUGIN_OPTIONS}
-            }},
-            scales: {{
-                y: {{ min: 0, max: 1, title: {{ display: true, text: 'top-1 accuracy' }} }},
-                x: {{ title: {{ display: true, text: 'k (units per author)' }} }}
-            }}
-        }}
-    }});
-    </script>
-    """
+
+def build_chart_spec(method_results, ceiling):
+    # the Vega-Lite spec of one method's chart
+    random_results = method_results["random"]
+    # one row per k with every series (band, hover rule and its tooltip) ...
+    per_k = [
+        {"k": str(k), **{key: round(method_results[key][str(k)]["top1"], 4) for key, _ in SCORES},
+         "random": round(random_results[str(k)]["mean"], 4), "random_min": round(random_results[str(k)]["min"], 4),
+         "random_max": round(random_results[str(k)]["max"], 4), "ceiling": round(ceiling["top1"], 4)}
+        for k in KS
+    ]
+    # ... and one row per k and series (lines and points)
+    series = [(key, label, *SCORE_STYLES[key]) for key, label in SCORES] + [
+        ("random", RANDOM_LABEL, RANDOM_RGB, False), ("ceiling", CEILING_LABEL, CEILING_RGB, True)]
+    rows = [{"k": row["k"], "series": label, "top1": row[key]} for row in per_k for key, label, _, _ in series]
+    labels = [label for _, label, _, _ in series]
+    color = {"field": "series", "type": "nominal",
+             "scale": {"domain": labels, "range": [hex_color(rgb) for _, _, rgb, _ in series]},
+             "legend": {"columns": 3}}
+    stroke_dash = {"field": "series", "type": "nominal",
+                   "scale": {"domain": labels, "range": [[6, 4] if key == "ceiling" else [4, 3] if dashed else [1, 0]
+                                                         for key, _, _, dashed in series]},
+                   "legend": {"columns": 3}}
+    y = {"type": "quantitative", "scale": {"domain": [0, 1]}, "axis": {"format": ".0%", "title": "top-1 accuracy"}}
+    hover = "hover"
+    return {
+        "width": 400, "height": 270,
+        "encoding": {"x": {"field": "k", "type": "ordinal", "sort": [str(k) for k in KS],
+                           "axis": {"labelAngle": 0, "title": "k (units per author)"}}},
+        "layer": [
+            # min-max band of the random baseline
+            {"data": {"values": per_k}, "mark": {"type": "area", "color": hex_color(RANDOM_RGB), "opacity": 0.2},
+             "encoding": {"y": {**y, "field": "random_min"}, "y2": {"field": "random_max"}}},
+            {"data": {"values": rows}, "mark": {"type": "line", "strokeWidth": 2},
+             "encoding": {"y": {**y, "field": "top1"}, "color": color, "strokeDash": stroke_dash}},
+            {"data": {"values": rows}, "transform": [{"filter": {"field": "series", "oneOf": labels[:-1]}}],
+             "mark": {"type": "point", "filled": True, "size": 40, "opacity": 1},
+             "encoding": {"y": {**y, "field": "top1"}, "color": color}},
+            # hover: a rule at the nearest k, tooltip with every series at that k
+            {"data": {"values": per_k}, "mark": {"type": "rule", "color": "#999", "strokeWidth": 1},
+             "params": [{"name": hover, "select": {"type": "point", "fields": ["k"], "nearest": True,
+                                                    "on": "pointerover", "clear": "pointerout"}}],
+             "encoding": {
+                 "opacity": {"condition": {"param": hover, "empty": False, "value": 1}, "value": 0},
+                 "tooltip": [{"field": "k", "title": "k"}]
+                 + [{"field": key, "title": label, "format": ".2%"} for key, label, _, _ in series]
+                 + [{"field": "random_min", "title": "random min", "format": ".2%"},
+                    {"field": "random_max", "title": "random max", "format": ".2%"}],
+             }},
+        ],
+    }
+
+
+def build_chart_html(chart_id, title, method_results, ceiling):
+    return build_vega_chart_html(chart_id, title, build_chart_spec(method_results, ceiling), 480)
 
 
 def build_table_html(result):
@@ -416,6 +512,27 @@ METHOD_NOTES = [
     "TF-SVM: unit counts per comment, LinearSVC trained on train",
     "Δ-sum: sum of the units' corrected Δ, nearest to test emb minus mean val emb",
 ]
+MERGE_NOTE = ("n = 1-3: the n = 1, 2 and 3 rankings merged by rank (best of each n in turn, then the second-best, ...) "
+              "until k units")
+
+
+def page_notes(sections):
+    return METHOD_NOTES + [DAMPING_NOTE] + ([MERGE_NOTE] if COMBINED in sections else [])
+
+
+def section_inputs(result):
+    # the input files of one section, for the footer
+    if result.get("ngram") == COMBINED:
+        per_n = "; ".join(
+            f"n = {n}: {html.escape(files['scoring_file'])}, {html.escape(files['deltas_file'])}, "
+            f"{', '.join(html.escape(name) for name in files['cache_val_files'] + files['cache_test_files'])} "
+            f"(cache series {html.escape(files['cache_series'])})"
+            for n, files in result["inputs"].items()
+        )
+        return f"input {html.escape(result['file'])}; {per_n}; test embeddings and val average from n = 1"
+    return (f"input {html.escape(result['file'])}, {html.escape(result['scoring_file'])}, {html.escape(result['deltas_file'])}, "
+            f"{', '.join(html.escape(name) for name in result['cache_val_files'] + result['cache_test_files'])}; "
+            f"cache series {html.escape(result['cache_series'])}")
 
 
 def build_section_html(unit, n, sections):
@@ -438,16 +555,14 @@ def build_page(unit, sections):
     # with its file name under "file"
     first = next(iter(sections.values()))
     footer = [
-        footer_prefix(n) + f"input {html.escape(result['file'])}, {html.escape(result['scoring_file'])}, {html.escape(result['deltas_file'])}, "
-        f"{', '.join(html.escape(name) for name in result['cache_val_files'] + result['cache_test_files'])}; "
-        f"cache series {html.escape(result['cache_series'])}; ceiling: {html.escape(result['ceiling']['source'])}"
+        footer_prefix(n) + f"{section_inputs(result)}; ceiling: {html.escape(result['ceiling']['source'])}"
         for n, result in sections.items()
     ]
     return f"""<html>
-<head>{PAGE_HEAD}</head>
+<head>{VEGA_PAGE_HEAD}</head>
 <body>
 {build_header_html(f"signature matching - {html.escape(first['dataset'])}, {html.escape(unit)} units", first, roles_line(first["data"]),
-                   signature_table_rows(len(first["settings"]["random_seeds"])), METHOD_NOTES + [DAMPING_NOTE])}
+                   signature_table_rows(len(first["settings"]["random_seeds"])), page_notes(sections))}
 {"".join(build_section_html(unit, n, sections) for n in sections)}
 {build_footer_html(footer)}
 </body>
@@ -459,13 +574,15 @@ def build_page(unit, sections):
 def parse_args():
     parser = argparse.ArgumentParser(description="signature matching on test with the effects unit scores")
     parser.add_argument("--unit", choices=sorted(UNIT_TYPES), default="subtoken")
-    parser.add_argument("--n", type=int, choices=NGRAM_SIZES, default=1)
+    parser.add_argument("--n", choices=[str(n) for n in NGRAM_SIZES] + [COMBINED], default="1")
     return parser.parse_args()
 
 
-def fit_all(sources, scoring, authors, train, corrected_deltas):
+def fit_all(sources, scoring, authors, train, corrected_deltas, draw_random=None):
     # every fitted matcher, before anything of test is read:
     # {method: {score key or "random": {k: fitted, or for random {seed: fitted}}}}
+    # draw_random: (k, seed) -> random signatures, random_signatures on the scoring by default
+    draw_random = draw_random or (lambda k, seed: random_signatures(scoring["scores"], authors, k, seed))
     fitted = {method: {key: {} for key, _ in SCORES} | {"random": {}} for method, _ in METHODS}
     for k in KS:
         for key, _ in SCORES:
@@ -473,7 +590,7 @@ def fit_all(sources, scoring, authors, train, corrected_deltas):
             for method, _ in METHODS:
                 fitted[method][key][str(k)] = fit(method, signatures, authors, train, corrected_deltas)
         for seed in RANDOM_SEEDS:
-            signatures = random_signatures(scoring["scores"], authors, k, seed)
+            signatures = draw_random(k, seed)
             for method, _ in METHODS:
                 fitted[method]["random"].setdefault(str(k), {})[str(seed)] = fit(method, signatures, authors, train, corrected_deltas)
         print(f"k = {k}: fitted")
@@ -504,9 +621,13 @@ def evaluate_all(fitted, test, average):
 
 def main():
     args = parse_args()
-    unit, n = args.unit, args.n
+    unit = args.unit
     created_at = datetime.now()
     stamp = f"{created_at:%Y%m%d-%H%M%S}"
+    if args.n == COMBINED:
+        main_combined(unit, created_at, stamp)
+        return
+    n = int(args.n)
     directory = unit_dir(unit, n)
 
     ceiling = load_ceiling()
@@ -574,11 +695,100 @@ def main():
     # the unit type's page, with every n that has matching results, this one included
     save_page(f"effects_matching_{unit}", build_page(unit, latest_sections(unit, MATCHING_PREFIX)), stamp)
 
+    print_summary(results)
+
+
+def print_summary(results):
     for method, label in METHODS:
         for k in ("10", "all"):
             r = results[method]
             print(f"{label}, k = {k}: " + ", ".join(f"{name} {r[key][k]['top1']:.2%}" for key, name in SCORES) + ", "
                   f"random {r['random'][k]['mean']:.2%} [{r['random'][k]['min']:.2%}, {r['random'][k]['max']:.2%}]")
+
+
+def main_combined(unit, created_at, stamp):
+    # n = 1-3: per signature type the n = 1, 2 and 3 rankings (each from its latest scoring file)
+    # merged by rank; TF-SVM on all n-grams of the chosen units, each relative to its own n;
+    # Δ-sum on the chosen units' corrected deltas of their n; test embeddings and val average
+    # from the n = 1 cache. Nothing else differs from the single-n matching.
+    directory = unit_dir(unit, COMBINED)
+    os.makedirs(directory, exist_ok=True)
+
+    ceiling = load_ceiling()
+    scorings, corrected_deltas, offsets = load_combined_scorings(unit)
+    authors = scorings[1]["authors"]
+    for n in NGRAM_SIZES:
+        print(f"n = {n}: scoring {scorings[n]['file']} (cache series {scorings[n]['cache_series']})")
+
+    # fitting: val (signatures, deltas, average) and train only
+    average, num_val = load_val_average(unit_dir(unit, 1), scorings[1])
+    frequencies = {n: frequency_ranking(unit_dir(unit, n), scorings[n], authors, unit, n) for n in NGRAM_SIZES}
+    sources, scores_by_n = combined_signature_sources(scorings, frequencies, authors, offsets)
+    count = lambda text: combined_unit_counts(text, unit)
+    train = load_train(authors, unit, count=count)
+    fitted = fit_all(sources, None, authors, train, corrected_deltas,
+                     draw_random=lambda k, seed: merged_random_signatures(scores_by_n, authors, k, seed))
+
+    # evaluation: the only place test is read
+    test_embeddings, test_counts, test_labels, test_files = load_test(
+        unit_dir(unit, 1), scorings[1]["cache_series"], authors, unit, count=count)
+    results = evaluate_all(fitted, (test_embeddings, test_counts, test_labels), average)
+
+    first = scorings[1]
+    result = {
+        "experiment": "effects_matching",
+        "created_at": created_at.isoformat(timespec="seconds"),
+        "ngram": COMBINED,
+        # the files each n's signatures come from (in results/.../{unit}/n{n}/)
+        "inputs": {
+            str(n): {
+                "scoring_file": scorings[n]["file"],
+                "deltas_file": scorings[n]["deltas_file"],
+                "cache_series": scorings[n]["cache_series"],
+                "cache_val_files": scorings[n]["cache_files"],
+                # the n = 1 test embeddings are the ones used
+                "cache_test_files": test_files if n == 1 else [],
+            }
+            for n in NGRAM_SIZES
+        },
+        "dataset": first["dataset"],
+        "model": first["model"],
+        "mode": first["mode"],
+        "perturbation": first["perturbation"],
+        "unit": unit,
+        "authors": authors,
+        "settings": {
+            "ks": KS,
+            "signature_types": {key: label for key, label in SCORES},
+            "merge": "per signature type the n = 1, 2, 3 rankings merged by rank: best unit of n = 1, of n = 2, of n = 3, "
+                     "then the second-best of each, ... until k units; no overlap filtering; 'all' = all cached units of all n",
+            "random_draw": "per seed and k one random.Random(seed); per author in author order and per n, k units sampled "
+                           "from that n's cached units sorted by unit string, merged in the same turns, first k",
+            "tf_features": "union of all authors' signature units (any n); value = occurrences of the n-gram in the comment / "
+                           "the comment's number of n-grams of the same n",
+            "delta_sum": "profile = normalised sum of the signature units' corrected deltas, each from its n's deltas file; "
+                         "test embeddings and val average embedding from the n = 1 cache",
+            "damping": f"final = corrected * n / (n + d), n = the author's comments containing the unit; "
+                       f"d = {DAMPING}, or {DAMPING_D20} for score1_d20",
+            "random_seeds": RANDOM_SEEDS,
+            "svm": {"model": "sklearn.svm.LinearSVC", "class_weight": "balanced", "multi_class": "ovr",
+                    "random_state": SVM_RANDOM_STATE, "other_parameters": "defaults"},
+            "scoring_settings": first["settings"],
+        },
+        "data": {"num_val_comments": num_val, "num_train_comments": len(train[1]), "num_test_comments": len(test_labels)},
+        "ceiling": ceiling,
+        # {n: the n's frequency ranking, as in its single-n matching}
+        "frequency_rankings": {str(n): frequencies[n] for n in NGRAM_SIZES},
+        "results": results,
+    }
+
+    result_path = os.path.join(directory, f"{MATCHING_PREFIX}{stamp}.json")
+    with open(result_path, "w") as f:
+        json.dump(result, f)
+    print(f"saved results to {result_path}")
+
+    save_page(f"effects_matching_{unit}", build_page(unit, latest_sections(unit, MATCHING_PREFIX)), stamp)
+    print_summary(results)
 
 
 if __name__ == "__main__":
