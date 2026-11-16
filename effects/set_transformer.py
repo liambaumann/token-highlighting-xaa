@@ -2,7 +2,8 @@
 # comment onto the author centroid in LUAR's space; compared with TF-SVM and Δ-sum (effects.matching)
 # on the same signatures. Runs locally on CPU; nothing is embedded.
 # Run from the repo root: python -m effects.set_transformer   (--unit: unit type, default word;
-# --n: n-gram size, only 1 for now)
+# --n: n-gram size, only 1 for now; --mean: background mean, zero-filled (default) or available-case,
+# see unit_scores)
 #
 # Data roles: val gives the signatures and the Δ-vectors (the latest scoring and deltas files, as in
 # matching); train (all train comments minus a 10 % holdout per author, seed 0) trains the model; the
@@ -24,9 +25,12 @@
 # the best holdout epoch's weights. Widths 32, 64, 128 per run; the best holdout top-1 is evaluated on
 # test. Runs: signature types score1 and frequency × both unit vectors, k = 10.
 #
-# Writes results/effects/{dataset}/{perturbation}/{model_mode}/{unit}/n1/set_transformer_{timestamp}.json
-# and the chosen models to models/effects/set_transformer/{dataset}/{perturbation}/{model_mode}/{unit}/n1/;
-# the page (outputs/{dataset}/{perturbation}/{model_mode}/effects_set_transformer_{unit}_{timestamp}.html)
+# The cache is read from results/effects/{dataset}/{perturbation}/{model_mode}/{unit}/n1/; the scoring,
+# deltas and matching files are the latest in the mean's folder (unit_scores.result_dir: n1/ for
+# zero-filled, n1/available-case/ for available-case), where set_transformer_{timestamp}.json is written.
+# The chosen models go to models/effects/set_transformer/{dataset}/{perturbation}/{model_mode}/{unit}/n1/
+# (its available-case/ subfolder for available-case); the page
+# (outputs/{dataset}/{perturbation}/{model_mode}/effects_set_transformer_{unit}_{mean}_{timestamp}.html)
 # is built from the result JSON by effects.set_transformer_page.
 
 import os
@@ -43,7 +47,7 @@ from data import DATASETS, load_jsonl_by_author
 from metrics import top1_accuracy
 from runs import load_runs
 from .units import UNIT_TYPES, unit_key
-from .unit_scores import unit_dir
+from .unit_scores import MEANS, DEFAULT_MEAN, unit_dir, result_dir
 from .matching import (
     MATCHING_PREFIX, load_scoring, frequency_ranking, signature_sources, top_signatures, load_train, load_test,
     feature_order,
@@ -296,16 +300,19 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Set Transformer matching on the effects signatures")
     parser.add_argument("--unit", choices=sorted(UNIT_TYPES), default="word")
     parser.add_argument("--n", type=int, choices=NGRAM_SIZES, default=1)
+    parser.add_argument("--mean", choices=MEANS, default=DEFAULT_MEAN)
     return parser.parse_args()
 
 
 def main():
     script_start = time.time()
     args = parse_args()
-    unit, n = args.unit, args.n
+    unit, n, mean = args.unit, args.n, args.mean
     created_at = datetime.now()
     stamp = f"{created_at:%Y%m%d-%H%M%S}"
-    directory = unit_dir(unit, n)
+    # the cache is read from cache_dir; scoring, deltas and matching read from and the result written to directory
+    cache_dir = unit_dir(unit, n)
+    directory = result_dir(unit, n, mean)
 
     scoring, _ = load_scoring(directory)
     authors = scoring["authors"]
@@ -314,7 +321,7 @@ def main():
     print(f"scoring {scoring['file']}, matching {matching['file']}, centroids {CENTROIDS_FILE}")
 
     # training data: val (signatures, Δ) and train only
-    frequency = frequency_ranking(directory, scoring, authors, unit, n)
+    frequency = frequency_ranking(cache_dir, scoring, authors, unit, n, mean)
     sources = signature_sources(scoring, frequency)
     train_counts, train_label_list = load_train(authors, unit, n)
     labels = torch.tensor(train_label_list)
@@ -357,7 +364,7 @@ def main():
 
     # evaluation: the only place test is read, after every model is trained and every width chosen
     test_start = time.time()
-    _, test_counts, test_labels, test_files = load_test(directory, scoring["cache_series"], authors, unit, n)
+    _, test_counts, test_labels, test_files = load_test(cache_dir, scoring["cache_series"], authors, unit, n)
     test_ids = list(range(len(test_labels)))
     empty_sets = {}
     for key, label in SIGNATURE_TYPES:
@@ -377,6 +384,8 @@ def main():
 
     # the chosen models
     model_dir = os.path.join(MODELS_ROOT, config.DATASET, config.PERTURBATION, config.MODEL_MODE_NAME, unit, f"n{n}")
+    if mean != "zero-filled":
+        model_dir = os.path.join(model_dir, mean)
     os.makedirs(model_dir, exist_ok=True)
     model_files = {}
     for key, _ in SIGNATURE_TYPES:
@@ -401,6 +410,7 @@ def main():
         "perturbation": scoring["perturbation"],
         "unit": unit,
         "ngram": n,
+        "mean": mean,
         "authors": authors,
         "inputs": {
             "scoring_file": scoring["file"],

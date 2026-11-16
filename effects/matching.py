@@ -3,7 +3,8 @@
 # ceiling. Runs locally on CPU; uses saved embeddings only, nothing is embedded.
 # Run from the repo root: python -m effects.matching   (--unit: unit type, default subtoken;
 # --n: n-gram size, default 1; for n >= 2 every "unit" below is an n-gram of units; --n 1-3: the
-# n = 1, 2 and 3 results combined, see main_combined)
+# n = 1, 2 and 3 results combined, see main_combined; --mean: background mean, zero-filled (default)
+# or available-case, see unit_scores)
 #
 # Data roles: val (the cached comments) gives the signatures, the Δ-vectors and the average
 # embedding; train (all train comments) only trains the SVMs; test (all test comments) is only
@@ -21,9 +22,11 @@
 # Damping: final = corrected * n / (n + d), n = the author's comments containing the unit.
 # Ceiling: top-1 accuracy of the latest saved retrieval run (config.RETRIEVAL_RESULTS_DIR).
 #
-# Writes results/effects/{dataset}/{perturbation}/{model_mode}/{unit}/n{n}/matching_{timestamp}.json
-# and outputs/{dataset}/{perturbation}/{model_mode}/effects_matching_{unit}_{timestamp}.html with one
-# section per n that has matching results.
+# Reads the cache from results/effects/{dataset}/{perturbation}/{model_mode}/{unit}/n{n}/ and the
+# latest scoring of the mean from the mean's folder (unit_scores.result_dir: n{n}/ for zero-filled,
+# n{n}/available-case/ for available-case). Writes matching_{timestamp}.json to the mean's folder and
+# outputs/{dataset}/{perturbation}/{model_mode}/effects_matching_{unit}_{mean}_{timestamp}.html with
+# one section per n that has matching results of that mean.
 
 import os
 import json
@@ -46,8 +49,8 @@ from runs import load_runs
 from reporting.chart import VEGA_PAGE_HEAD, TOP_RGB, BOTTOM_RGB, RANDOM_RGB, build_note_html, build_vega_chart_html
 from .units import UNIT_TYPES, NGRAM_SIZES, COMBINED, comment_units, unit_key
 from .unit_scores import (
-    DAMPING, DAMPING_D20, SIGNATURE_ROWS, DAMPING_NOTE, build_header_html, build_footer_html, section_heading,
-    footer_prefix, save_page, unit_dir, latest_sections,
+    DAMPING, DAMPING_D20, SIGNATURE_ROWS, DAMPING_NOTE, MEANS, DEFAULT_MEAN, MEAN_NOTES, build_header_html,
+    build_footer_html, section_heading, footer_prefix, save_page, unit_dir, result_dir, latest_sections,
 )
 from .cache import TEST_PREFIX, prepare_comment
 
@@ -80,6 +83,11 @@ SCORE_STYLES = {
     "frequency": (FREQUENCY_RGB, False),
 }
 CEILING_RGB = (60, 60, 60)
+# bgf of the frequency baseline per background mean
+BGF_DEFINITIONS = {
+    "zero-filled": "bgf = mean over all authors of freq (0 where never used)",
+    "available-case": "bgf = mean of freq over only the authors where the unit is cached",
+}
 
 
 # ---------- inputs ----------
@@ -130,12 +138,13 @@ def unit_counts(text, unit, ngram=1):
     return Counter(occurrences), len(occurrences)
 
 
-def frequency_ranking(directory, scoring, authors, unit, ngram=1):
+def frequency_ranking(directory, scoring, authors, unit, ngram=1, mean=DEFAULT_MEAN):
     # reference baseline: per author its cached units (the ones the unit scores rank), ranked by
     # freq = occurrences in the author's sampled val comments / all units in them, minus
-    # bgf = mean over all authors of freq (0 where never used), damped by n / (n + DAMPING),
-    # n = the author's comments containing the unit. Units from the cached comments' tokens, as the
-    # cache; for ngram >= 2 the units are n-grams and freq is over all n-grams.
+    # bgf = mean of freq over all authors (zero-filled: 0 where never used) or over only the authors
+    # where the unit is cached (available-case), damped by n / (n + DAMPING), n = the author's
+    # comments containing the unit. Units from the cached comments' tokens, as the cache; for
+    # ngram >= 2 the units are n-grams and freq is over all n-grams. directory: the cache folder.
     comments = {}
     for fname in scoring["cache_files"]:
         with open(os.path.join(directory, fname)) as f:
@@ -152,13 +161,21 @@ def frequency_ranking(directory, scoring, authors, unit, ngram=1):
         comments_with[author].update(set(units))
         num_units[author] += len(units)
     freq = {author: {name: count / num_units[author] for name, count in occurrences[author].items()} for author in authors}
+    # per unit the authors it is cached for, in author order
+    cached_for = {}
+    for b in authors:
+        for cached in scoring["scores"][b]:
+            cached_for.setdefault(unit_key(cached["unit"]), []).append(b)
 
     ranking = {}
     for author in authors:
         entries = []
         for cached in scoring["scores"][author]:
             name = unit_key(cached["unit"])
-            bgf = sum(freq[b].get(name, 0.0) for b in authors) / len(authors)
+            if mean == "zero-filled":
+                bgf = sum(freq[b].get(name, 0.0) for b in authors) / len(authors)
+            else:
+                bgf = sum(freq[b][name] for b in cached_for[name]) / len(cached_for[name])
             n = comments_with[author][name]
             corrected = freq[author][name] - bgf
             entries.append({
@@ -302,13 +319,13 @@ def combined_signature_sources(scorings, frequencies, authors, offsets):
     return sources, scores_by_n
 
 
-def load_combined_scorings(unit, scoring_files=None):
-    # per n the scoring (the latest, or the named file) and its corrected deltas, concatenated in
-    # order n = 1, 2, 3; returns ({n: scoring}, deltas, {n: row offset})
+def load_combined_scorings(unit, scoring_files=None, mean=DEFAULT_MEAN):
+    # per n the scoring of the mean (the latest in the mean's folder, or the named file there) and its
+    # corrected deltas, concatenated in order n = 1, 2, 3; returns ({n: scoring}, deltas, {n: row offset})
     scorings, deltas, offsets = {}, [], {}
     offset = 0
     for n in NGRAM_SIZES:
-        directory = unit_dir(unit, n)
+        directory = result_dir(unit, n, mean)
         if scoring_files is None:
             scoring, corrected = load_scoring(directory)
         else:
@@ -368,7 +385,7 @@ def fit_delta_sum(signatures, authors, corrected_deltas):
 
 def evaluate(method, fitted, test, average):
     # top-1 accuracy on test: per comment one value per author (margin / cosine similarity),
-    # the highest counts as the prediction
+    # the highest counts as the prediction; also which comments were predicted correctly
     embeddings, counts, labels = test
     if method == "tf_svm":
         svm = fitted["svm"]
@@ -379,7 +396,9 @@ def evaluate(method, fitted, test, average):
             (embeddings - average).unsqueeze(1), fitted["profiles"].unsqueeze(0), dim=2
         )
     correct, total = top1_accuracy(sims, labels)
-    return {"top1": correct / total, "correct": correct, "total": total}
+    # per test comment (test-plan order) 1 if predicted correctly, else 0, for paired tests (effects.mcnemar)
+    by_comment = (sims.argmax(dim=1) == labels).int().tolist()
+    return {"top1": correct / total, "correct": correct, "total": total, "correct_by_comment": by_comment}
 
 
 def fit(method, signatures, authors, train, corrected_deltas):
@@ -516,8 +535,10 @@ MERGE_NOTE = ("n = 1-3: the n = 1, 2 and 3 rankings merged by rank (best of each
               "until k units")
 
 
-def page_notes(sections):
-    return METHOD_NOTES + [DAMPING_NOTE] + ([MERGE_NOTE] if COMBINED in sections else [])
+def page_notes(sections, mean=None):
+    # mean: the background mean of the page's results, noted if given
+    return (METHOD_NOTES + [DAMPING_NOTE] + ([MEAN_NOTES[mean]] if mean else [])
+            + ([MERGE_NOTE] if COMBINED in sections else []))
 
 
 def section_inputs(result):
@@ -550,9 +571,9 @@ def build_section_html(unit, n, sections):
 {build_table_html(result)}"""
 
 
-def build_page(unit, sections):
-    # the page of one unit type; sections: {n: matching result}, one section per n-gram size, each
-    # with its file name under "file"
+def build_page(unit, sections, mean=DEFAULT_MEAN):
+    # the page of one unit type and mean; sections: {n: matching result}, one section per n-gram size,
+    # each with its file name under "file"
     first = next(iter(sections.values()))
     footer = [
         footer_prefix(n) + f"{section_inputs(result)}; ceiling: {html.escape(result['ceiling']['source'])}"
@@ -562,7 +583,7 @@ def build_page(unit, sections):
 <head>{VEGA_PAGE_HEAD}</head>
 <body>
 {build_header_html(f"signature matching - {html.escape(first['dataset'])}, {html.escape(unit)} units", first, roles_line(first["data"]),
-                   signature_table_rows(len(first["settings"]["random_seeds"])), page_notes(sections))}
+                   signature_table_rows(len(first["settings"]["random_seeds"])), page_notes(sections, mean))}
 {"".join(build_section_html(unit, n, sections) for n in sections)}
 {build_footer_html(footer)}
 </body>
@@ -575,6 +596,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="signature matching on test with the effects unit scores")
     parser.add_argument("--unit", choices=sorted(UNIT_TYPES), default="subtoken")
     parser.add_argument("--n", choices=[str(n) for n in NGRAM_SIZES] + [COMBINED], default="1")
+    parser.add_argument("--mean", choices=MEANS, default=DEFAULT_MEAN)
     return parser.parse_args()
 
 
@@ -621,14 +643,17 @@ def evaluate_all(fitted, test, average):
 
 def main():
     args = parse_args()
-    unit = args.unit
+    unit, mean = args.unit, args.mean
     created_at = datetime.now()
     stamp = f"{created_at:%Y%m%d-%H%M%S}"
     if args.n == COMBINED:
-        main_combined(unit, created_at, stamp)
+        main_combined(unit, created_at, stamp, mean)
         return
     n = int(args.n)
-    directory = unit_dir(unit, n)
+    # the cache is read from cache_dir, the scoring read from and the result written to directory
+    cache_dir = unit_dir(unit, n)
+    directory = result_dir(unit, n, mean)
+    os.makedirs(directory, exist_ok=True)
 
     ceiling = load_ceiling()
     scoring, corrected_deltas = load_scoring(directory)
@@ -636,13 +661,13 @@ def main():
     print(f"scoring {scoring['file']} (cache series {scoring['cache_series']}), ceiling {ceiling['top1']:.2%} from {ceiling['source']}")
 
     # fitting: val (signatures, deltas, average) and train only
-    average, num_val = load_val_average(directory, scoring)
-    frequency = frequency_ranking(directory, scoring, authors, unit, n)
+    average, num_val = load_val_average(cache_dir, scoring)
+    frequency = frequency_ranking(cache_dir, scoring, authors, unit, n, mean)
     train = load_train(authors, unit, n)
     fitted = fit_all(signature_sources(scoring, frequency), scoring, authors, train, corrected_deltas)
 
     # evaluation: the only place test is read
-    test_embeddings, test_counts, test_labels, test_files = load_test(directory, scoring["cache_series"], authors, unit, n)
+    test_embeddings, test_counts, test_labels, test_files = load_test(cache_dir, scoring["cache_series"], authors, unit, n)
     results = evaluate_all(fitted, (test_embeddings, test_counts, test_labels), average)
 
     result = {
@@ -659,6 +684,7 @@ def main():
         "perturbation": scoring["perturbation"],
         "unit": unit,
         "ngram": n,
+        "mean": mean,
         "authors": authors,
         "settings": {
             "ks": KS,
@@ -666,7 +692,7 @@ def main():
             "damping": f"final = corrected * n / (n + d), n = the author's comments containing the unit; "
                        f"d = {DAMPING}, or {DAMPING_D20} for score1_d20",
             "frequency": "reference baseline, not from the unit scores: freq = occurrences of the unit in the author's "
-                         "sampled val comments / all units in them; bgf = mean over all authors of freq (0 where never used); "
+                         f"sampled val comments / all units in them; {BGF_DEFINITIONS[mean]}; "
                          f"final = (freq - bgf) * n / (n + {DAMPING}); "
                          "candidates = the author's cached units; ties by unit string",
             "random_seeds": RANDOM_SEEDS,
@@ -692,8 +718,8 @@ def main():
         json.dump(result, f)
     print(f"saved results to {result_path}")
 
-    # the unit type's page, with every n that has matching results, this one included
-    save_page(f"effects_matching_{unit}", build_page(unit, latest_sections(unit, MATCHING_PREFIX)), stamp)
+    # the unit type's page of this mean, with every n that has matching results of it, this one included
+    save_page(f"effects_matching_{unit}_{mean}", build_page(unit, latest_sections(unit, MATCHING_PREFIX, mean), mean), stamp)
 
     print_summary(results)
 
@@ -706,23 +732,23 @@ def print_summary(results):
                   f"random {r['random'][k]['mean']:.2%} [{r['random'][k]['min']:.2%}, {r['random'][k]['max']:.2%}]")
 
 
-def main_combined(unit, created_at, stamp):
-    # n = 1-3: per signature type the n = 1, 2 and 3 rankings (each from its latest scoring file)
-    # merged by rank; TF-SVM on all n-grams of the chosen units, each relative to its own n;
+def main_combined(unit, created_at, stamp, mean=DEFAULT_MEAN):
+    # n = 1-3: per signature type the n = 1, 2 and 3 rankings (each from the latest scoring file of the
+    # mean) merged by rank; TF-SVM on all n-grams of the chosen units, each relative to its own n;
     # Δ-sum on the chosen units' corrected deltas of their n; test embeddings and val average
     # from the n = 1 cache. Nothing else differs from the single-n matching.
-    directory = unit_dir(unit, COMBINED)
+    directory = result_dir(unit, COMBINED, mean)
     os.makedirs(directory, exist_ok=True)
 
     ceiling = load_ceiling()
-    scorings, corrected_deltas, offsets = load_combined_scorings(unit)
+    scorings, corrected_deltas, offsets = load_combined_scorings(unit, mean=mean)
     authors = scorings[1]["authors"]
     for n in NGRAM_SIZES:
         print(f"n = {n}: scoring {scorings[n]['file']} (cache series {scorings[n]['cache_series']})")
 
     # fitting: val (signatures, deltas, average) and train only
     average, num_val = load_val_average(unit_dir(unit, 1), scorings[1])
-    frequencies = {n: frequency_ranking(unit_dir(unit, n), scorings[n], authors, unit, n) for n in NGRAM_SIZES}
+    frequencies = {n: frequency_ranking(unit_dir(unit, n), scorings[n], authors, unit, n, mean) for n in NGRAM_SIZES}
     sources, scores_by_n = combined_signature_sources(scorings, frequencies, authors, offsets)
     count = lambda text: combined_unit_counts(text, unit)
     train = load_train(authors, unit, count=count)
@@ -739,7 +765,9 @@ def main_combined(unit, created_at, stamp):
         "experiment": "effects_matching",
         "created_at": created_at.isoformat(timespec="seconds"),
         "ngram": COMBINED,
-        # the files each n's signatures come from (in results/.../{unit}/n{n}/)
+        "mean": mean,
+        # the files each n's signatures come from (scoring and deltas in the mean's folder of n, cache
+        # files in results/.../{unit}/n{n}/)
         "inputs": {
             str(n): {
                 "scoring_file": scorings[n]["file"],
@@ -787,7 +815,7 @@ def main_combined(unit, created_at, stamp):
         json.dump(result, f)
     print(f"saved results to {result_path}")
 
-    save_page(f"effects_matching_{unit}", build_page(unit, latest_sections(unit, MATCHING_PREFIX)), stamp)
+    save_page(f"effects_matching_{unit}_{mean}", build_page(unit, latest_sections(unit, MATCHING_PREFIX, mean), mean), stamp)
     print_summary(results)
 
 

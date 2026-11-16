@@ -2,9 +2,10 @@
 # display helpers come from effects.matching, whose import loads the model module).
 # effects.set_transformer calls save_result_page after a run; run from the repo root to rebuild the
 # page of a saved result: python -m effects.set_transformer_page   (--unit, default word; --n, only 1;
-# --file: a set_transformer_*.json in the unit's n folder, default the latest). A rebuilt page gets
-# a new timestamp, nothing is overwritten.
-# Writes outputs/{dataset}/{perturbation}/{model_mode}/effects_set_transformer_{unit}_{timestamp}.html.
+# --mean: zero-filled (default) or available-case; --file: a set_transformer_*.json in the mean's folder
+# of the unit and n (unit_scores.result_dir), default the latest there). A rebuilt page gets a new
+# timestamp, nothing is overwritten.
+# Writes outputs/{dataset}/{perturbation}/{model_mode}/effects_set_transformer_{unit}_{mean}_{timestamp}.html.
 
 import os
 import json
@@ -14,7 +15,9 @@ from datetime import datetime
 from runs import load_runs
 from reporting.chart import VEGA_PAGE_HEAD, TOP_RGB, BOTTOM_RGB, build_note_html, build_vega_chart_html
 from .units import UNIT_TYPES
-from .unit_scores import DAMPING_NOTE, build_header_html, build_footer_html, save_page, unit_dir
+from .unit_scores import (
+    DAMPING_NOTE, MEANS, DEFAULT_MEAN, MEAN_NOTES, build_header_html, build_footer_html, save_page, result_dir,
+)
 from .matching import FREQUENCY_RGB, signature_table_rows, format_rate, hex_color
 
 RESULT_PREFIX = "set_transformer_"
@@ -73,6 +76,11 @@ def build_table_html(result):
 </table>"""
 
 
+def result_mean(result):
+    # results from before --mean have no "mean" and are zero-filled
+    return result.get("mean", DEFAULT_MEAN)
+
+
 def build_notes(result):
     s = result["settings"]
     optimizer = s["optimizer"]
@@ -89,6 +97,7 @@ def build_notes(result):
         f"width {', '.join(map(str, s['widths']))} per run, the best holdout top-1 evaluated once on test; "
         f"TF-SVM and Δ-sum: k = {s['k']} from {html.escape(result['matching_file'])}",
         DAMPING_NOTE,
+        MEAN_NOTES[result_mean(result)],
     ]
 
 
@@ -129,20 +138,21 @@ def build_page(result):
 
 
 def save_result_page(result, stamp):
-    return save_page(f"effects_set_transformer_{result['unit']}", build_page(result), stamp)
+    return save_page(f"effects_set_transformer_{result['unit']}_{result_mean(result)}", build_page(result), stamp)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="rebuild the page of a saved effects.set_transformer result")
     parser.add_argument("--unit", choices=sorted(UNIT_TYPES), default="word")
     parser.add_argument("--n", type=int, choices=[1], default=1)
-    parser.add_argument("--file", help="a set_transformer_*.json in the unit's n folder (default: the latest)")
+    parser.add_argument("--mean", choices=MEANS, default=DEFAULT_MEAN)
+    parser.add_argument("--file", help="a set_transformer_*.json in the mean's folder of the unit and n (default: the latest)")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    directory = unit_dir(args.unit, args.n)
+    directory = result_dir(args.unit, args.n, args.mean)
     if args.file:
         with open(os.path.join(directory, args.file)) as f:
             result = json.load(f)
