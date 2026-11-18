@@ -1,4 +1,4 @@
-"""Test top-1 over k for TF-SVM, Δ-sum and the set transformer (learned unit vectors).
+"""Test top-1 over k for TF-SVM, Δ-sum and the set transformer (background Δ and learned unit vectors).
 
 Numbers are copied from the "Main comparison: test top-1" table in results/misc/set_transformer.md
 (zero-filled mean only) and the full-LUAR ceiling from its "Reference" table.
@@ -24,23 +24,33 @@ OUT_DIR = HERE / "outputs"
 
 FONT = "Latin Modern Roman"
 
-# (k, signature, TF-SVM, Δ-sum, ST learned) - zero-filled rows of the main comparison table
+# (k, signature, TF-SVM, Δ-sum, ST (background Δ), ST learned) - rows of the main comparison table
+# (zero-filled, width 16); k = all is one row there, the same for both signatures
 ROWS = [
-    (5, "Euclidean distance", 50.8, 62.2, 62.0),
-    (5, "relative frequency", 60.1, 65.5, 67.1),
-    (10, "Euclidean distance", 59.4, 64.0, 68.1),
-    (10, "relative frequency", 64.9, 66.0, 71.6),
-    (20, "Euclidean distance", 62.4, 60.0, 73.5),
-    (20, "relative frequency", 67.3, 65.4, 73.2),
+    ("1", "effect vector", 40.9, 53.4, 49.6, 50.7),
+    ("1", "relative frequency", 45.4, 58.0, 56.0, 52.8),
+    ("2", "effect vector", 40.9, 62.3, 49.6, 50.7),
+    ("2", "relative frequency", 51.2, 61.7, 60.0, 57.9),
+    ("5", "effect vector", 50.8, 62.2, 61.9, 62.0),
+    ("5", "relative frequency", 60.1, 65.5, 66.8, 67.1),
+    ("10", "effect vector", 59.4, 64.0, 70.4, 68.1),
+    ("10", "relative frequency", 64.9, 66.0, 70.1, 71.6),
+    ("20", "effect vector", 62.4, 60.0, 74.7, 73.5),
+    ("20", "relative frequency", 67.3, 65.4, 74.5, 73.2),
+    ("50", "effect vector", 67.4, 60.8, 75.5, 75.1),
+    ("50", "relative frequency", 70.6, 63.8, 76.4, 74.7),
+    ("all", "effect vector", 73.6, 59.8, 77.0, 71.5),
+    ("all", "relative frequency", 73.6, 59.8, 77.0, 71.5),
 ]
 FULL_LUAR = 88.1
 
-METHODS = ["TF-SVM", "Δ-sum", "ST learned"]
-METHOD_COLORS = ["#2a78d6", "#eb6834", "#1baf7a"]  # categorical slots 1-3 (validated all-pairs)
-SIGNATURES = ["Euclidean distance", "relative frequency"]
-Y_SCALE = {"domain": [50, 90], "zero": False}  # on every layer, else the layers' union starts at 0
-X_SCALE = {"type": "log", "domain": [5, 20], "nice": False, "padding": 14}
-X_AXIS = {"values": [5, 10, 20], "format": "d", "grid": False}
+KS = ["1", "2", "5", "10", "20", "50", "all"]
+METHODS = ["TF-SVM", "Δ-sum", "ST (background Δ)", "ST learned"]
+METHOD_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]  # categorical slots 1-4 (validated adjacent)
+SIGNATURES = ["effect vector", "relative frequency"]
+Y_SCALE = {"domain": [40, 90], "zero": False}  # on every layer, else the layers' union starts at 0
+X_SCALE = {"type": "point", "domain": KS, "padding": 0.3}  # k evenly spaced
+X_AXIS = {"labelAngle": 0, "labelAlign": "center", "grid": False}
 Y_TITLE = "test top-1 (%)"
 TEXT_COLOR = "#52514e"
 
@@ -54,7 +64,7 @@ def long_rows():
 
 
 def x_enc():
-    return {"field": "k", "type": "quantitative", "title": "k", "scale": X_SCALE, "axis": X_AXIS}
+    return {"field": "k", "type": "ordinal", "title": "k", "scale": X_SCALE, "axis": X_AXIS}
 
 
 def color_enc(legend=True):
@@ -72,10 +82,10 @@ def ceiling_layers():
         "encoding": {"y": {"field": "top1", "type": "quantitative", "scale": Y_SCALE}},
     }
     label = {
-        "data": {"values": [{"top1": FULL_LUAR, "k": 5, "label": f"full LUAR (ceiling) {FULL_LUAR}"}]},
+        "data": {"values": [{"top1": FULL_LUAR, "k": KS[0], "label": f"full LUAR (ceiling) {FULL_LUAR}"}]},
         "mark": {"type": "text", "align": "left", "baseline": "top", "dx": 0, "dy": 4,
                  "color": TEXT_COLOR},
-        "encoding": {"x": {"field": "k", "type": "quantitative", "scale": X_SCALE},
+        "encoding": {"x": {"field": "k", "type": "ordinal", "scale": X_SCALE},
                      "y": {"field": "top1", "type": "quantitative", "scale": Y_SCALE},
                      "text": {"field": "label"}},
     }
@@ -111,7 +121,7 @@ def build_spec():
     })
 
 
-SPLIT_WIDTH = 175
+SPLIT_WIDTH = 230
 SPLIT_HEIGHT = 260
 LABEL_GAP_PX = 14  # min vertical distance between two end labels
 
@@ -138,7 +148,7 @@ def spread_labels(values, min_gap):
 
 def split_panel(signature, first):
     rows = [r for r in long_rows() if r["signature"] == signature]
-    last_k = max(r["k"] for r in rows)
+    last_k = KS[-1]
     ends = [r for r in rows if r["k"] == last_k]
     y_domain = Y_SCALE["domain"]
     min_gap = LABEL_GAP_PX * (y_domain[1] - y_domain[0]) / SPLIT_HEIGHT
@@ -165,7 +175,7 @@ def split_panel(signature, first):
         "mark": {"type": "text", "align": "left", "baseline": "middle", "dx": 9,
                  "color": TEXT_COLOR},
         "encoding": {
-            "x": {"field": "k", "type": "quantitative", "scale": X_SCALE},
+            "x": {"field": "k", "type": "ordinal", "scale": X_SCALE},
             "y": {"field": "label_y", "type": "quantitative", "scale": Y_SCALE},
             "text": {"field": "method"},
         },
@@ -181,7 +191,7 @@ def split_panel(signature, first):
 def build_split_spec():
     return vega_spec({
         "hconcat": [split_panel(sig, i == 0) for i, sig in enumerate(SIGNATURES)],
-        "spacing": 60,  # room for the left panel's end labels
+        "spacing": 30,  # room for the left panel's end labels
     })
 
 

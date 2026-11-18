@@ -2,7 +2,7 @@ data/
 outputs/
 models/
 cache/
-results/
+results/*
 !results/misc/
 backup/
 _to_delete/

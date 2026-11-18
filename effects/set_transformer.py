@@ -2,7 +2,7 @@
 # comment onto the author centroid in LUAR's space; compared with TF-SVM and Δ-sum (effects.matching)
 # on the same signatures. Runs locally on CPU; nothing is embedded.
 # Run from the repo root: python -m effects.set_transformer   (--unit: unit type, default word;
-# --n: n-gram size, only 1 for now; --mean: background mean, zero-filled (default) or available-case,
+# --n: n-gram size, only 1 for now; --k: signature size, one of matching.KS, default K; --mean: background mean, zero-filled (default) or available-case,
 # see unit_scores)
 #
 # Data roles: val gives the signatures and the Δ-vectors (the latest scoring and deltas files, as in
@@ -49,7 +49,7 @@ from runs import load_runs
 from .units import UNIT_TYPES, unit_key
 from .unit_scores import MEANS, DEFAULT_MEAN, unit_dir, result_dir
 from .matching import (
-    MATCHING_PREFIX, load_scoring, frequency_ranking, signature_sources, top_signatures, load_train, load_test,
+    MATCHING_PREFIX, KS, load_scoring, frequency_ranking, signature_sources, top_signatures, load_train, load_test,
     feature_order,
 )
 from .set_transformer_page import save_result_page
@@ -60,10 +60,10 @@ MODELS_ROOT = "models/effects/set_transformer"
 CENTROIDS_FILE = os.path.join(config.CACHE_DIR, "centroids.pt")
 
 NGRAM_SIZES = [1]
-K = 10
-SIGNATURE_TYPES = [("score1", "score 1"), ("frequency", "frequency")]
+K = 1
+SIGNATURE_TYPES = [("score2", "score 2"), ("frequency", "frequency")]
 UNIT_VECTORS = ["learned", "background-delta"]
-WIDTHS = [32, 64, 128]
+WIDTHS = [16]
 
 NUM_BLOCKS = 2
 NUM_HEADS = 4
@@ -82,7 +82,7 @@ HOLDOUT_SEED = 0
 EVAL_BATCH_SIZE = 512
 PERMUTATION_TOLERANCE = 1e-5
 PERMUTATION_CHECK_COMMENTS = 256
-# the matching methods compared at k = K
+# the matching methods compared at the same k
 MATCHING_METHODS = ["tf_svm", "delta_sum"]
 
 
@@ -300,6 +300,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Set Transformer matching on the effects signatures")
     parser.add_argument("--unit", choices=sorted(UNIT_TYPES), default="word")
     parser.add_argument("--n", type=int, choices=NGRAM_SIZES, default=1)
+    parser.add_argument("--k", type=lambda v: v if v == "all" else int(v), choices=KS, default=K)
     parser.add_argument("--mean", choices=MEANS, default=DEFAULT_MEAN)
     return parser.parse_args()
 
@@ -307,7 +308,7 @@ def parse_args():
 def main():
     script_start = time.time()
     args = parse_args()
-    unit, n, mean = args.unit, args.n, args.mean
+    unit, n, k, mean = args.unit, args.n, args.k, args.mean
     created_at = datetime.now()
     stamp = f"{created_at:%Y%m%d-%H%M%S}"
     # the cache is read from cache_dir; scoring, deltas and matching read from and the result written to directory
@@ -331,10 +332,10 @@ def main():
 
     runs, models, inputs_per_type = {}, {}, {}
     for key, label in SIGNATURE_TYPES:
-        signatures = top_signatures(sources[key], authors, key, K)
+        signatures = top_signatures(sources[key], authors, key, k)
         if key == "frequency":
             # the same ranking as the matching run's (its saved frequency ranking)
-            saved = top_signatures(matching["frequency_ranking"], authors, key, K)
+            saved = top_signatures(matching["frequency_ranking"], authors, key, k)
             if any([unit_key(e["unit"]) for e in signatures[a]] != [unit_key(e["unit"]) for e in saved[a]] for a in authors):
                 raise SystemExit(f"frequency signatures differ from those in {matching['file']}")
         pooled = pooled_units(signatures)
@@ -394,11 +395,11 @@ def main():
             width = runs[key][vectors]["chosen_width"]
             path = os.path.join(model_dir, f"{stamp}_{key}_{vectors}_w{width}.pt")
             torch.save({"state_dict": models[key][vectors].state_dict(), "width": width, "unit_vectors": vectors,
-                        "signature_type": key, "k": K, "pooled_units": inputs_per_type[key]["pooled"], "authors": authors,
+                        "signature_type": key, "k": k, "pooled_units": inputs_per_type[key]["pooled"], "authors": authors,
                         "result_file": f"{RESULT_PREFIX}{stamp}.json"}, path)
             model_files[key][vectors] = path
 
-    matching_k10 = {key: {method: matching["results"][method][key][str(K)]["top1"] for method in MATCHING_METHODS}
+    matching_k10 = {key: {method: matching["results"][method][key][str(k)]["top1"] for method in MATCHING_METHODS}
                     for key, _ in SIGNATURE_TYPES}
     result = {
         "experiment": "effects_set_transformer",
@@ -425,7 +426,7 @@ def main():
         },
         "matching_file": matching["file"],
         "settings": {
-            "k": K,
+            "k": k,
             "signature_types": dict(SIGNATURE_TYPES),
             "unit_vectors": {
                 "learned": "nn.Embedding(pooled units, width)",
