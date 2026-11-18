@@ -3,6 +3,7 @@ outputs/
 models/
 cache/
 results/
+!results/misc/
 backup/
 _to_delete/
 
